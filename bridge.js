@@ -2,6 +2,7 @@ import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { addMessage } from './db.js';
+import { LINUX_IP, WINDOWS_IP, WINDOWS_SSH_USER, WINDOWS_WORKDIR } from './config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -18,12 +19,12 @@ export const NODES = {
     role: 'agent',
     model: 'opencode/big-pickle',
     fallback: 'opencode/deepseek-v4-flash-free',
-    workdir: 'C:\\Users\\wilgo\\.opencode\\nexus_work',
+    workdir: WINDOWS_WORKDIR,
   },
 };
 
 const OPENCODE_BIN = '/home/fabiorjvr/.opencode/bin/opencode';
-const WINDOWS_SSH = 'wilgo@WINDOWS_TAILSCALE_IP';
+const WINDOWS_SSH = `${WINDOWS_SSH_USER}@${WINDOWS_IP}`;
 
 function makeContext(node, task, recent) {
   const cfg = NODES[node];

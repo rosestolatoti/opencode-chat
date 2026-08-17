@@ -5,4 +5,6 @@ nexus.db-shm
 *.log
 work/
 relatorios/
+backups/
+.env
 .DS_Store

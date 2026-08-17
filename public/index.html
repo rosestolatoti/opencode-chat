@@ -87,6 +87,24 @@
 
 </div>
 
+<div id="loginOverlay" hidden>
+  <div class="login-panel">
+    <div class="login-brand">
+      <h3>NEXUS</h3>
+      <span>PAINEL DE COMANDO</span>
+    </div>
+    <p class="login-hint">Acesso restrito à equipe. Informe o token e selecione o dispositivo.</p>
+    <select id="loginNode">
+      <option value="fabio">Fabio — líder</option>
+      <option value="linux">PC-Linux</option>
+      <option value="windows">Notebook-Windows</option>
+      <option value="android">Celular-Android</option>
+    </select>
+    <input id="loginToken" type="password" placeholder="Token de acesso" autocomplete="off">
+    <button class="ghost-btn" id="loginBtn" style="width:100%;margin:0">Entrar</button>
+    <div class="login-err" id="loginErr" hidden></div>
+  </div>
+</div>
 <div id="lightbox" hidden><img id="lightbox-img" alt=""><span id="lb-close">✕</span></div>
 <div id="fileModal">
   <div class="fm-panel">

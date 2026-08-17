@@ -1,9 +1,10 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { DB_PATH, LINUX_IP, WINDOWS_IP, ANDROID_IP } from './config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const db = new Database(path.join(__dirname, 'nexus.db'));
+const db = new Database(DB_PATH);
 
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
@@ -62,9 +63,9 @@ END;
 try { db.exec('ALTER TABLE nodes ADD COLUMN model TEXT'); } catch { /* já existe */ }
 
 const nodes = [
-  ['linux', 'PC-LINUX', 'subchief', 'linux', 'LINUX_TAILSCALE_IP', 'Deepseek v4 Flash'],
-  ['windows', 'NOTEBOOK-WINDOWS', 'agent', 'windows', 'WINDOWS_TAILSCALE_IP', 'Big Pickle (fallback: Deepseek v4 Flash)'],
-  ['android', 'CELULAR-ANDROID', 'viewer', 'android', 'ANDROID_TAILSCALE_IP', 'Claude Opus (futuro)'],
+  ['linux', 'PC-LINUX', 'subchief', 'linux', LINUX_IP, 'Deepseek v4 Flash'],
+  ['windows', 'NOTEBOOK-WINDOWS', 'agent', 'windows', WINDOWS_IP, 'Big Pickle (fallback: Deepseek v4 Flash)'],
+  ['android', 'CELULAR-ANDROID', 'viewer', 'android', ANDROID_IP, 'Claude Opus (futuro)'],
   ['fabio', 'FABIO ROSESTOLATO', 'leader', 'human', '', 'Líder humano'],
 ];
 

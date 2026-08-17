@@ -422,6 +422,7 @@ $('#fileInput3').addEventListener('change', e => { doUpload(e.target.files[0]); 
 /* ---------- websocket com reconexão automática ---------- */
 let ws = null;
 let wsRetry = 0;
+let currentSession = null;
 
 function handleWsMessage(ev) {
   const m = JSON.parse(ev.data);
@@ -451,24 +452,56 @@ function connectWs(){
   ws = new WebSocket(wsUrl);
   ws.onopen = () => {
     wsRetry = 0;
-    ws.send(JSON.stringify({ type:'auth', node:'fabio', role:'leader' }));
     loadMessages();
     refresh();
   };
   ws.onmessage = handleWsMessage;
   ws.onclose = () => {
     wsRetry++;
-    if (wsRetry > 5){ location.reload(); return; }
-    setTimeout(connectWs, Math.min(wsRetry * 2000, 10000));
+    const delay = Math.min(1000 * Math.pow(2, wsRetry), 30000);
+    setTimeout(connectWs, delay);
   };
   ws.onerror = () => ws.close();
 }
 
-connectWs();
+/* ---------- sessão / login ---------- */
+async function ensureSession(){
+  try {
+    const r = await fetch('/api/session');
+    if (r.ok){ currentSession = await r.json(); return true; }
+  } catch {}
+  return false;
+}
 
-/* ---------- carregar histórico IMEDIATAMENTE (independente de WS) ---------- */
-loadMessages();
-refresh();
+async function doLogin(){
+  const token = $('#loginToken').value.trim();
+  const node = $('#loginNode').value;
+  const err = $('#loginErr');
+  err.hidden = true;
+  if (!token){ err.textContent = 'Digite o token.'; err.hidden = false; return; }
+  try {
+    const r = await fetch('/api/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ token, node }) });
+    if (r.ok){ location.reload(); return; }
+    const j = await r.json().catch(() => ({}));
+    err.textContent = j.error || 'Token inválido.';
+    err.hidden = false;
+  } catch {
+    err.textContent = 'Falha ao conectar com o servidor.';
+    err.hidden = false;
+  }
+}
+$('#loginBtn').addEventListener('click', doLogin);
+$('#loginToken').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+
+/* ---------- boot: autentica primeiro, depois conecta ---------- */
+async function boot(){
+  const ok = await ensureSession();
+  if (!ok){ $('#loginOverlay').hidden = false; return; }
+  connectWs();
+  loadMessages();
+  refresh();
+}
+boot();
 
 /* ---------- refresh periódico (só sidebar/telemetria — NÃO mexe nas mensagens) ---------- */
 async function refresh(){
