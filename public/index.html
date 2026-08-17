@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chat Fabio Rosestolato — LLM</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app">
+
+  <aside class="rail">
+    <div class="brand">
+      <div class="eyebrow">// painel de comando</div>
+      <h1>Chat Fabio Rosestolato <span class="llm-tag">LLM</span></h1>
+      <svg class="mesh" viewBox="0 0 210 122" aria-hidden="true">
+        <line class="mesh-line" x1="44" y1="61" x2="166" y2="21"/>
+        <line class="mesh-line" x1="44" y1="61" x2="166" y2="61"/>
+        <line class="mesh-line mesh-line--dashed" x1="44" y1="61" x2="166" y2="101"/>
+        <circle class="mesh-node mesh-node--human" cx="44" cy="61" r="9"/>
+        <circle class="mesh-node mesh-node--linux" cx="166" cy="21" r="7"/>
+        <circle class="mesh-node mesh-node--windows" cx="166" cy="61" r="7"/>
+        <circle class="mesh-node mesh-node--android" cx="166" cy="101" r="7"/>
+        <circle id="meshPulse" cx="166" cy="61" r="7" fill="var(--amber)"/>
+      </svg>
+    </div>
+
+    <div class="rail-section">
+      <h2>Equipe <span id="rosterCount"></span></h2>
+      <div class="roster" id="roster"></div>
+    </div>
+
+    <div class="rail-section">
+      <h2>Tarefas <span id="taskCount"></span></h2>
+      <ul class="tasks" id="taskList"></ul>
+    </div>
+
+    <div class="rail-section">
+      <h2>Arquivos <span>Compartilhado</span></h2>
+      <div id="filesBox">
+        <button class="ghost-btn" id="btnFiles">📁 Abrir pasta compartilhada</button>
+        <label class="ghost-btn upload-btn">⬆️ Enviar arquivo
+          <input type="file" id="fileInput2" hidden>
+        </label>
+      </div>
+    </div>
+
+    <div class="rail-section">
+      <h2>Sistema</h2>
+      <div class="meter">
+        <div class="meter-label"><span>RAM</span><span id="ramLabel"></span></div>
+        <div class="meter-track"><div class="meter-fill" id="ramFill"></div></div>
+      </div>
+      <div class="stat-row"><span class="k">Disco livre</span><span id="statDisk"></span></div>
+      <div class="stat-row"><span class="k">Mensagens</span><span id="statMessages"></span></div>
+      <div class="load-row">
+        <div class="chip" id="load1"><small>1min</small></div>
+        <div class="chip" id="load5"><small>5min</small></div>
+        <div class="chip" id="load15"><small>15min</small></div>
+      </div>
+    </div>
+  </aside>
+
+  <main class="chat">
+    <header class="chat-header">
+      <div>
+        <h2>Chat Fabio Rosestolato <span class="llm-tag">LLM</span></h2>
+        <div class="meta" id="headerMeta"></div>
+      </div>
+      <input class="search" id="searchInput" type="text" placeholder="Buscar no histórico...">
+    </header>
+
+    <div class="transcript" id="transcript"></div>
+
+    <form class="composer" id="composer" autocomplete="off">
+      <div class="mention-menu" id="mentionMenu"></div>
+      <label class="clip" title="Enviar arquivo">📎
+        <input type="file" id="fileInput" hidden>
+      </label>
+      <textarea id="messageInput" rows="1" placeholder="Digite sua mensagem... @linux @windows @todos @auto"></textarea>
+      <button type="submit">Enviar</button>
+    </form>
+  </main>
+
+</div>
+
+<div id="lightbox" hidden><img id="lightbox-img" alt=""><span id="lb-close">✕</span></div>
+<div id="fileModal">
+  <div class="fm-panel">
+    <div class="fm-head">
+      <h3>📁 Pasta compartilhada</h3>
+      <button class="fm-close" id="fmClose">✕</button>
+    </div>
+    <div class="fm-toolbar">
+      <input class="fm-search" id="fmSearch" type="text" placeholder="Buscar arquivo…">
+      <div class="fm-sorts">
+        <button class="fm-sort is-on" data-sort="date">Data</button>
+        <button class="fm-sort" data-sort="name">Nome</button>
+        <button class="fm-sort" data-sort="size">Tamanho</button>
+        <button class="fm-sort" data-sort="type">Tipo</button>
+      </div>
+      <span class="fm-count" id="fmCount"></span>
+    </div>
+    <div class="fm-body" id="fmBody"></div>
+    <div class="fm-foot">
+      <label class="ghost-btn upload-btn" style="width:auto;margin:0">⬆️ Enviar arquivo
+        <input type="file" id="fileInput3" hidden>
+      </label>
+      <span class="hint">Arquivos ficam salvos no PC Linux — acesso de qualquer dispositivo</span>
+    </div>
+  </div>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

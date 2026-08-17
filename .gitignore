@@ -1,0 +1,8 @@
+node_modules/
+nexus.db
+nexus.db-wal
+nexus.db-shm
+*.log
+work/
+relatorios/
+.DS_Store

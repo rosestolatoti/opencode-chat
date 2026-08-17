@@ -1,0 +1,6 @@
+server.js   filter=mask
+db.js       filter=mask
+bridge.js   filter=mask
+orchestrator.js filter=mask
+scripts/*.sh   filter=mask
+scripts/*.ps1  filter=mask
