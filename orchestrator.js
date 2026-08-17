@@ -1,7 +1,18 @@
 import { runAgent, testWindows } from './bridge.js';
 import { addMessage, getMessages, getNodes, getTasks, taskStats, addTask, updateTask } from './db.js';
+import { truncateText } from './lib/util.js';
 
 const MENTION_RE = /^@(linux|windows|todos|auto|pause|resume|status)\s*/i;
+
+/* Política central do orquestrador — limites previsíveis */
+const POLICY = {
+  MAX_QUEUE: 50,
+  MAX_OPS_PER_MIN: 10,
+  MIN_FREE_MEM_GB: 2,
+  MAX_TASK_MS: 10 * 60 * 1000,
+  MAX_DELEGATIONS: 5,
+  MAX_CHARS_TRANSFER: 4000,
+};
 
 function parseCommand(text) {
   const match = text.match(MENTION_RE);
@@ -16,16 +27,24 @@ class Orchestrator {
     this.queue = [];       // fila serial (um spawn de opencode por vez no Linux)
     this.running = false;
     this.paused = false;
-    this.maxDelegations = 5;
-    this.timeoutMs = 10 * 60 * 1000;
+    this.opTimestamps = []; // rate limit
+    this.maxDelegations = POLICY.MAX_DELEGATIONS;
+    this.timeoutMs = POLICY.MAX_TASK_MS;
     this.activeTasks = new Map();
+  }
+
+  isRateLimited() {
+    const now = Date.now();
+    this.opTimestamps = this.opTimestamps.filter(t => now - t < 60000);
+    return this.opTimestamps.length >= POLICY.MAX_OPS_PER_MIN;
   }
 
   async freeMemGb() {
     const { execFile } = await import('child_process');
     return new Promise(resolve => {
       execFile('free', ['-b'], (err, stdout) => {
-        if (err) return resolve(99);
+        // fail-closed: se não sabemos a memória, NÃO executamos
+        if (err) return resolve(0);
         const line = stdout.split('\n')[1].split(/\s+/);
         const avail = parseInt(line[6], 10) || 0; // MemAvailable
         resolve(avail / 1024 ** 3);
@@ -58,6 +77,15 @@ class Orchestrator {
   }
 
   enqueue(node, task, opts = {}) {
+    if (this.queue.length >= POLICY.MAX_QUEUE) {
+      this.broadcast({ type: 'system', text: `⛔ Fila cheia (${POLICY.MAX_QUEUE} tarefas). Tarefa recusada.` });
+      return { ok: false, error: 'fila cheia' };
+    }
+    if (this.isRateLimited()) {
+      this.broadcast({ type: 'system', text: `⏳ Limite de ${POLICY.MAX_OPS_PER_MIN} comandos/minuto atingido. Aguarde.` });
+      return { ok: false, error: 'rate limit' };
+    }
+    this.opTimestamps.push(Date.now());
     const job = { node, task, opts, id: Date.now() };
     this.queue.push(job);
     this.broadcast({ type: 'system', text: `📥 ${node} enfileirado: "${task.slice(0, 80)}${task.length > 80 ? '…' : ''}"` });
@@ -73,7 +101,7 @@ class Orchestrator {
     this.running = true;
     try {
       const mem = await this.freeMemGb();
-      if (mem < 2) {
+      if (mem < POLICY.MIN_FREE_MEM_GB) {
         this.broadcast({ type: 'system', text: `⚠️ Memória baixa (${mem.toFixed(1)}GB livres). Tarefa "${job.task.slice(0, 40)}…" adiada até liberar RAM.` });
         this.queue.unshift(job);
         setTimeout(() => { this.running = false; this.pump(); }, 30000);
@@ -160,7 +188,7 @@ class Orchestrator {
       const next = job.opts.sequential[idx + 1];
       if (next) {
         this.broadcast({ type: 'system', text: `🔄 ${job.node} concluiu → passando para ${next}…` });
-        this.enqueue(next, text || job.task, { from: job.node, sequential: job.opts.sequential });
+        this.enqueue(next, truncateText(text || job.task, POLICY.MAX_CHARS_TRANSFER), { from: job.node, sequential: job.opts.sequential });
         return;
       }
       this.broadcast({ type: 'system', text: `✅ Sequência completa (${job.opts.sequential.join(' → ')}) para o líder.` });
@@ -170,13 +198,13 @@ class Orchestrator {
     const deleg = /DELEGAR:\s*(linux|windows)/i.exec(text);
     if (deleg && (job.opts.autonomous || job.opts.sequential)) {
       const to = deleg[1].toLowerCase();
-      const reason = text.replace(/DELEGAR:\s*(linux|windows)/i, '').trim() || 'continue a tarefa';
+      const reason = truncateText(text.replace(/DELEGAR:\s*(linux|windows)/i, '').trim() || 'continue a tarefa', POLICY.MAX_CHARS_TRANSFER);
       this.broadcast({ type: 'system', text: `🔄 ${job.node} delegou para ${to}: ${reason.slice(0, 100)}` });
       this.enqueue(to, reason, { from: job.node, autonomous: job.opts.autonomous, sequential: job.opts.sequential });
       return;
     }
     if (job.opts.autonomous && text.includes('TAREFA_COMPLETA') === false && depth < 2) {
-      const next = text.split('\n').pop()?.trim() || '';
+      const next = truncateText(text.split('\n').pop()?.trim() || '', POLICY.MAX_CHARS_TRANSFER);
       if (next && next.length > 10 && !next.startsWith('[')) {
         this.broadcast({ type: 'system', text: `🔄 ${job.node} continuando autonomamente…` });
         this.enqueue(job.node, next, { from: job.node, autonomous: true });
@@ -204,4 +232,4 @@ function stripAnsi(s) {
   return s.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/\r/g, '');
 }
 
-export { Orchestrator, parseCommand };
+export { Orchestrator, parseCommand, POLICY };
