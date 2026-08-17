@@ -146,3 +146,9 @@ Eventos `{ type, ... }`:
 ## Licença
 
 Uso interno da equipe. Distribuição e uso sujeitos a autorização.
+
+## Requisitos futuros (registrados — não implementar agora)
+
+- **Contexto de projeto por tarefa**: toda tarefa deve possuir contexto de projeto e máquina-alvo, evitando trabalho paralelo/desconectado entre Linux e Windows.
+- **Cadastro formal de dispositivos**: hoje os 4 dispositivos conhecidos (fabio, linux, windows, android) têm poder total; no futuro, cadastro/revogação por dispositivo (ex.: celular perdido revogado sem trocar o token dos demais).
+- **Múltiplas identidades com permissões distintas** (ex.: identidade convidada com permissões reduzidas).

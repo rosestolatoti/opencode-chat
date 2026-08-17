@@ -20,7 +20,13 @@ function loadEnv() {
 }
 
 const env = loadEnv();
-const str = (k, d) => (env[k] !== undefined && env[k] !== '' ? env[k] : d);
+// prioridade: variável de ambiente do processo > arquivo .env > padrão
+const str = (k, d) =>
+  process.env[k] !== undefined && process.env[k] !== ''
+    ? process.env[k]
+    : env[k] !== undefined && env[k] !== ''
+      ? env[k]
+      : d;
 
 export const PORT = parseInt(str('NEXUS_PORT', '3777'), 10);
 export const BOOTSTRAP_TOKEN = str('NEXUS_TOKEN', '');

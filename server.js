@@ -13,7 +13,7 @@ import db, {
 } from './db.js';
 import { Orchestrator, parseCommand } from './orchestrator.js';
 import { PORT, BOOTSTRAP_TOKEN, UPLOAD_DIR, LINUX_IP, WINDOWS_IP, ANDROID_IP, SESSION_TTL_MS } from './config.js';
-import { SUBDIRS, fileCategory, fileCategoryType, parseCookies, resolveInside, parseJsonBody } from './lib/util.js';
+import { SUBDIRS, fileCategory, fileCategoryType, parseCookies, resolveInside, parseJsonBody, normalizeMessage } from './lib/util.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const STATIC = path.join(__dirname, 'public');
@@ -88,10 +88,12 @@ function readJsonBody(req, maxBytes = 1024 * 1024) {
     let size = 0;
     let aborted = false;
     req.on('data', d => {
+      if (aborted) return;
       size += d.length;
       if (size > maxBytes) {
         aborted = true;
-        req.destroy();
+        req.removeAllListeners('data'); // drena o restante sem acumular
+        req.on('data', () => {});
         const e = new Error('corpo muito grande');
         e.status = 413;
         reject(e);
@@ -169,9 +171,12 @@ wss.on('connection', (ws, req) => {
         broadcast({ type: 'typing', node: nodeName, active: !!msg.active });
         break;
       case 'message': {
-        const saved = addMessage({ node: nodeName, content: msg.text || '', type: msg.mtype || 'text' });
+        let text;
+        try { text = normalizeMessage(msg.text); }
+        catch (e) { ws.send(JSON.stringify({ type: 'error', error: e.message })); return; }
+        const saved = addMessage({ node: nodeName, content: text, type: msg.mtype || 'text' });
         broadcast({ type: 'message', message: saved });
-        if (nodeName === 'fabio') handleFabioInput(msg.text || '', nodeName);
+        if (nodeName !== 'unknown') handleFabioInput(text, nodeName);
         break;
       }
       case 'task':
@@ -199,14 +204,11 @@ setInterval(() => {
 
 async function handleFabioInput(text, from = 'fabio') {
   const { target, prompt } = parseCommand(text);
-  if (target === 'chat') return;
-  if ((target === 'pause' || target === 'resume') && from !== 'fabio') {
-    broadcast({ type: 'system', text: '⚠️ Apenas o líder pode pausar/retomar o loop.' });
-    return;
-  }
+  if (target === 'chat') return { ok: true, note: 'chat' };
   if (prompt || target === 'status' || target === 'pause' || target === 'resume') {
-    await orch.handleCommand({ target, prompt, from, recent: getMessages({ limit: 10 }) });
+    return await orch.handleCommand({ target, prompt, from, recent: getMessages({ limit: 10 }) });
   }
+  return { ok: true };
 }
 
 /* ================== uploads ================== */
@@ -375,7 +377,8 @@ server.on('request', (req, res) => {
 
     if (req.method === 'POST' && p === '/api/message') {
       readJsonBody(req).then(j => {
-        const saved = addMessage({ node: session.node, content: String(j.text || ''), type: j.type || 'text' });
+        const text = normalizeMessage(j.text);
+        const saved = addMessage({ node: session.node, content: text, type: j.type || 'text' });
         broadcast({ type: 'message', message: saved });
         sendJson(res, 200, saved);
       }).catch(e => sendJson(res, e.status || 400, { error: e.message }));
@@ -383,8 +386,12 @@ server.on('request', (req, res) => {
     }
 
     if (req.method === 'POST' && p === '/api/command') {
-      readJsonBody(req).then(j => {
-        handleFabioInput(String(j.text || ''), session.node);
+      readJsonBody(req).then(async j => {
+        const r = await handleFabioInput(String(j.text || ''), session.node);
+        if (r && r.ok === false) {
+          sendJson(res, 429, { ok: false, error: r.error });
+          return;
+        }
         sendJson(res, 200, { ok: true, queued: true });
       }).catch(e => sendJson(res, e.status || 400, { error: e.message }));
       return;

@@ -456,12 +456,20 @@ function connectWs(){
     refresh();
   };
   ws.onmessage = handleWsMessage;
-  ws.onclose = () => {
+  ws.onclose = async () => {
+    // sessão morreu? (ex: servidor reiniciou) → mostra login e PARA o loop
+    const r = await fetch('/api/session').catch(() => null);
+    if (!r || r.status === 401) { showLogin(); return; }
     wsRetry++;
     const delay = Math.min(1000 * Math.pow(2, wsRetry), 30000);
     setTimeout(connectWs, delay);
   };
   ws.onerror = () => ws.close();
+}
+
+function showLogin(){
+  $('#loginOverlay').hidden = false;
+  if (ws) { try { ws.close(); } catch {} }
 }
 
 /* ---------- sessão / login ---------- */
@@ -496,7 +504,7 @@ $('#loginToken').addEventListener('keydown', e => { if (e.key === 'Enter') doLog
 /* ---------- boot: autentica primeiro, depois conecta ---------- */
 async function boot(){
   const ok = await ensureSession();
-  if (!ok){ $('#loginOverlay').hidden = false; return; }
+  if (!ok){ showLogin(); return; }
   connectWs();
   loadMessages();
   refresh();
