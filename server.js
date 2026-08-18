@@ -287,6 +287,14 @@ server.on('request', (req, res) => {
       serveFile(res, full, mimeByExt(path.extname(full)));
       return;
     }
+    // PWA: manifest e service worker (públicos)
+    if (req.method === 'GET' && (p === '/manifest.json' || p === '/sw.js')) {
+      const full = resolveInside(STATIC, p.slice(1));
+      if (!full) { sendJson(res, 404, { error: 'not found' }); return; }
+      const ct = p === '/manifest.json' ? 'application/manifest+json' : 'application/javascript';
+      serveFile(res, full, ct);
+      return;
+    }
 
     // login/logout/sessão (únicos endpoints públicos de API)
     if (req.method === 'POST' && p === '/api/login') {
