@@ -397,6 +397,14 @@ server.on('request', (req, res) => {
       return;
     }
 
+    if (req.method === 'POST' && p === '/api/debug/upload-log') {
+      readJsonBody(req).then(j => {
+        console.log('[UPLOAD-LOG-SERVER]', JSON.stringify(j));
+        sendJson(res, 200, { ok: true });
+      }).catch(e => sendJson(res, 400, { error: e.message }));
+      return;
+    }
+
     if (req.method === 'POST' && p === '/api/upload') {
       upload.single('file')(req, res, (err) => {
         if (err) { sendJson(res, 400, { error: err.message }); return; }

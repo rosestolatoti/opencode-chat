@@ -58,8 +58,9 @@ function renderRoster(nodes){
   el.innerHTML = sorted.map(n => {
     const tag = TAG_OF[n.name];
     const online = !!n.online;
+    const working = activeAgent && activeAgent.node === n.name ? ' is-working' : '';
     return `
-      <div class="member" data-tag="${tag}">
+      <div class="member${working}" data-tag="${tag}">
         <div class="icon accent-${tag === 'you' ? 'human' : tag}">${ICONS[tag === 'you' ? 'person' : tag]}</div>
         <div class="member-info">
           <div class="name">${escapeHTML(n.display_name)}</div>
@@ -71,7 +72,8 @@ function renderRoster(nodes){
   const total = sorted.length;
   const on = sorted.filter(n => n.online).length;
   $('#rosterCount').textContent = total + ' integrantes';
-  $('#headerMeta').textContent = total + ' integrantes · ' + on + ' online';
+  lastHeaderMeta = total + ' integrantes · ' + on + ' online';
+  if (!activeAgent) $('#headerMeta').textContent = lastHeaderMeta;
 }
 
 /* ---------- tarefas reais ---------- */
@@ -132,6 +134,8 @@ function appendMessageDOM(msg){
   const cls = tag === 'you' ? 'from-you' : isSystem ? 'system' : 'from-' + tag;
   const wrap = document.createElement('div');
   wrap.className = 'msg ' + cls;
+  if (msg.id != null) wrap.dataset.messageId = String(msg.id);
+  if (msg.content != null) wrap.dataset.messageContent = String(msg.content);
   const iconKey = tag === 'you' ? 'person' : tag;
   const avatarHTML = isSystem ? '' : `<div class="avatar accent-${tag === 'you' ? 'human' : tag}">${ICONS[iconKey]}</div>`;
   const model = (msg.node !== 'system' && msg.node !== 'fabio') ? `<span class="model accent-${tag === 'you' ? 'human' : tag}">${escapeHTML(MODELS[msg.node] || '')}</span>` : '';
@@ -182,8 +186,47 @@ function streamChunk(m){
 }
 function streamEnd(m){
   const el = $('#transcript').querySelector(`[data-stream="${m.stream_id}"]`);
-  if (el) el.classList.remove('streaming');
+  if (el) { el.classList.remove('streaming'); el.classList.add('stream-final'); }
   delete streams[m.stream_id];
+}
+
+/* ---------- status de agente (fase: started/delegated/finished/error) ---------- */
+let activeAgent = null;
+let lastHeaderMeta = '';
+
+function updateAgentStatus(m){
+  activeAgent = (m.phase === 'started' || m.phase === 'delegated')
+    ? { node: m.from, phase: m.phase, note: m.note }
+    : null;
+  if (activeAgent) {
+    const label = m.phase === 'delegated' ? '→ delegando…' : 'trabalhando…';
+    $('#headerMeta').textContent = `${DISPLAY[TAG_OF[m.from]] || m.from} ${label}`;
+  } else if (lastHeaderMeta) {
+    $('#headerMeta').textContent = lastHeaderMeta;
+  }
+  const roster = $('#roster');
+  if (roster) {
+    roster.querySelectorAll('.member').forEach(member => {
+      const tag = member.dataset.tag;
+      member.classList.toggle('is-working', !!activeAgent && TAG_OF[activeAgent.node] === tag);
+    });
+  }
+}
+
+/* ---------- conversão do balão de streaming na mensagem final (sem segundo bloco) ---------- */
+function finalizeStreamAsMessage(m){
+  const el = $('#transcript').querySelector(`[data-stream="${m.stream_id}"]`);
+  if (!el) return false;
+  const bubble = el.querySelector('.msg-bubble');
+  if (!bubble) return false;
+  bubble.innerHTML = formatText(m.content || '');
+  renderAttachment(bubble, m);
+  if (m.id != null) el.dataset.messageId = String(m.id);
+  if (m.content != null) el.dataset.messageContent = String(m.content);
+  el.classList.remove('streaming', 'stream-final');
+  delete streams[m.stream_id];
+  if (m.id != null) seen.add(m.id);
+  return true;
 }
 
 /* ---------- typing ---------- */
@@ -213,13 +256,67 @@ function setActiveNode(tag){
 }
 
 /* ---------- envio ---------- */
+let pendingImage = null; // { file, previewUrl, caption }
+
 function sendMessage(text){
-  if (!text.trim()) return;
-  const input = $('#messageInput');
-  input.value = '';
-  autoGrow();
-  ws.send(JSON.stringify({ type:'message', from:'fabio', text }));
-  setActiveNode('you');
+  if (!text.trim() && !pendingImage) return;
+  
+  if (pendingImage) {
+    // Envia imagem + texto juntos
+    sendImageWithCaption(pendingImage.file, text);
+    clearPendingImage();
+  } else {
+    // Texto normal
+    const input = $('#messageInput');
+    input.value = '';
+    autoGrow();
+    ws.send(JSON.stringify({ type:'message', from:'fabio', text }));
+    setActiveNode('you');
+  }
+}
+
+function clearPendingImage() {
+  if (pendingImage?.previewUrl) URL.revokeObjectURL(pendingImage.previewUrl);
+  pendingImage = null;
+  renderComposerPreview();
+}
+
+function renderComposerPreview() {
+  const container = $('#composerPreview');
+  if (!pendingImage) {
+    container.hidden = true;
+    container.innerHTML = '';
+    return;
+  }
+  container.hidden = false;
+  container.innerHTML = `
+    <div class="composer-preview">
+      <img src="${pendingImage.previewUrl}" alt="Preview" class="preview-img">
+      <span class="preview-name">${escapeHTML(pendingImage.file.name)}</span>
+      <button type="button" class="preview-remove" id="previewRemove" title="Remover imagem">✕</button>
+    </div>
+  `;
+  $('#previewRemove')?.addEventListener('click', clearPendingImage);
+}
+
+async function sendImageWithCaption(file, caption) {
+  let uploadFile = file;
+  if (file.type.startsWith('image/')) {
+    try {
+      const compressed = await compressImage(file);
+      uploadFile = new File([compressed], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' });
+      console.log(`[Upload] Comprimido: ${(file.size/1024).toFixed(0)}KB → ${(uploadFile.size/1024).toFixed(0)}KB`);
+    } catch (e) { console.warn('[Upload] Falha ao comprimir, enviando original:', e.message); }
+  }
+  const fd = new FormData();
+  fd.append('file', uploadFile);
+  fd.append('sender', 'fabio');
+  if (caption && caption.trim()) fd.append('caption', caption.trim());
+  try {
+    const r = await fetch('/api/upload', { method:'POST', body:fd });
+    const j = await r.json();
+    if (!j.ok) alert('Erro no upload: ' + (j.error || 'desconhecido'));
+  } catch (e) { alert('Falha ao enviar: ' + e.message); }
 }
 
 function autoGrow(){
@@ -400,10 +497,49 @@ document.querySelectorAll('.fm-sort').forEach(btn => {
   });
 });
 
+async function compressImage(file, maxDim = 1280, quality = 0.7) {
+  // Cria bitmap já redimensionado — evita alocar canvas gigante (limite de RAM do Chrome Android)
+  if ('createImageBitmap' in window) {
+    try {
+      const bmp = await createImageBitmap(file, { resizeWidth: maxDim, resizeHeight: maxDim, resizeQuality: 'high' });
+      const canvas = document.createElement('canvas');
+      canvas.width = bmp.width;
+      canvas.height = bmp.height;
+      canvas.getContext('2d').drawImage(bmp, 0, 0);
+      bmp.close();
+      return await new Promise(res => canvas.toBlob(res, 'image/jpeg', quality));
+    } catch (e) { console.warn('createImageBitmap falhou, fallback canvas direto:', e.message); }
+  }
+  // Fallback: canvas direto (pode estourar RAM em fotos grandes)
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(img.src);
+      const canvas = document.createElement('canvas');
+      let { width, height } = img;
+      if (width > height) { if (width > maxDim) { height *= maxDim/width; width = maxDim; } }
+      else { if (height > maxDim) { width *= maxDim/height; height = maxDim; } }
+      canvas.width = width; canvas.height = height;
+      canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+      canvas.toBlob(b => resolve(b), 'image/jpeg', quality);
+    };
+    img.onerror = () => reject(new Error('Falha ao carregar imagem'));
+    img.src = URL.createObjectURL(file);
+  });
+}
+
 async function doUpload(file){
   if (!file) return;
+  let uploadFile = file;
+  if (file.type.startsWith('image/')) {
+    try {
+      const compressed = await compressImage(file);
+      uploadFile = new File([compressed], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' });
+      console.log(`[Upload] Comprimido: ${(file.size/1024).toFixed(0)}KB → ${(uploadFile.size/1024).toFixed(0)}KB`);
+    } catch (e) { console.warn('[Upload] Falha ao comprimir, enviando original:', e.message); }
+  }
   const fd = new FormData();
-  fd.append('file', file);
+  fd.append('file', uploadFile);
   fd.append('sender', 'fabio');
   const r = await fetch('/api/upload', { method:'POST', body:fd });
   const j = await r.json();
@@ -415,9 +551,40 @@ async function doUpload(file){
   }
 }
 
-$('#fileInput').addEventListener('change', e => { doUpload(e.target.files[0]); e.target.value = ''; });
-$('#fileInput2').addEventListener('change', e => { doUpload(e.target.files[0]); e.target.value = ''; });
-$('#fileInput3').addEventListener('change', e => { doUpload(e.target.files[0]); e.target.value = ''; });
+$('#fileInput').addEventListener('change', e => { 
+  const file = e.target.files[0]; 
+  e.target.value = ''; 
+  if (file && file.type.startsWith('image/')) {
+    pendingImage = { file, previewUrl: URL.createObjectURL(file) };
+    renderComposerPreview();
+    $('#messageInput').focus();
+  } else if (file) {
+    // Não-imagem: envia direto
+    doUpload(file);
+  }
+});
+$('#fileInput2').addEventListener('change', e => { 
+  const file = e.target.files[0]; 
+  e.target.value = ''; 
+  if (file && file.type.startsWith('image/')) {
+    pendingImage = { file, previewUrl: URL.createObjectURL(file) };
+    renderComposerPreview();
+    $('#messageInput').focus();
+  } else if (file) {
+    doUpload(file);
+  }
+});
+$('#fileInput3').addEventListener('change', e => { 
+  const file = e.target.files[0]; 
+  e.target.value = ''; 
+  if (file && file.type.startsWith('image/')) {
+    pendingImage = { file, previewUrl: URL.createObjectURL(file) };
+    renderComposerPreview();
+    $('#messageInput').focus();
+  } else if (file) {
+    doUpload(file);
+  }
+});
 
 /* ---------- websocket com reconexão automática ---------- */
 let ws = null;
@@ -432,11 +599,19 @@ function handleWsMessage(ev) {
       m.nodes.forEach(n => { MODELS[n.name] = n.model; });
       break;
     case 'message':
-      appendMessageDOM(m.message);
-      setActiveNode(TAG_OF[m.message.node] || 'linux');
+      // mensagem final do streaming: converte o balão existente (nunca duplica)
+      if (m.message && m.message.stream_id && finalizeStreamAsMessage(m.message)) {
+        setActiveNode(TAG_OF[m.message.node] || 'linux');
+      } else {
+        appendMessageDOM(m.message);
+        setActiveNode(TAG_OF[m.message.node] || 'linux');
+      }
       break;
     case 'system':
       appendMessageDOM({ node:'system', content:m.text, type:'system' });
+      break;
+    case 'agent_status':
+      updateAgentStatus(m);
       break;
     case 'typing':
       if (m.active) typingNodes.add(m.node); else typingNodes.delete(m.node);
@@ -505,6 +680,9 @@ $('#loginToken').addEventListener('keydown', e => { if (e.key === 'Enter') doLog
 async function boot(){
   const ok = await ensureSession();
   if (!ok){ showLogin(); return; }
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
   connectWs();
   loadMessages();
   refresh();

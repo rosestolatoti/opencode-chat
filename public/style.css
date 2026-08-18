@@ -163,6 +163,14 @@ pre{ background:#161B17; color:#E8EDE4; padding:12px; border-radius:4px; overflo
 .mention-item .tag{ font-family:var(--font-mono); color:var(--blue); font-size:13px; }
 .mention-item .desc{ font-size:11px; color:var(--ink-dim); }
 
+/* ---------- Preview do composer ---------- */
+#composerPreview{ margin-bottom:8px; }
+.composer-preview{ position:relative; display:inline-flex; align-items:center; gap:8px; background:var(--surface-sunken); border:1px solid var(--line); border-radius:8px; padding:6px 10px; max-width:100%; }
+.preview-img{ width:48px; height:48px; object-fit:cover; border-radius:4px; flex-shrink:0; }
+.preview-name{ font-size:12px; color:var(--ink-dim); max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.preview-remove{ background:none; border:none; color:var(--ink-dim); font-size:16px; cursor:pointer; padding:2px 6px; line-height:1; }
+.preview-remove:hover{ color:var(--red); }
+
 #lightbox{ position:fixed; inset:0; background:rgba(0,0,0,.92); display:flex; align-items:center; justify-content:center; z-index:100; }
 #lightbox img{ max-width:92vw; max-height:92vh; border-radius:6px; }
 #lb-close{ position:absolute; top:16px; right:24px; color:#fff; font-size:28px; cursor:pointer; font-family:var(--font-mono); }
@@ -248,6 +256,26 @@ pre{ background:#161B17; color:#E8EDE4; padding:12px; border-radius:4px; overflo
 .fm-empty{ color:var(--ink-dim); font-size:13px; text-align:center; padding:32px 0; }
 .fm-foot{ padding:12px 18px; border-top:1px solid var(--line); display:flex; gap:10px; align-items:center; }
 .fm-foot .hint{ font-size:11px; color:var(--ink-dim); }
+
+/* ---------- streaming / status de agente ---------- */
+.member.is-working{ box-shadow:0 0 0 1px var(--blue); border-radius:8px; }
+.member.is-working .led{ animation:pulse-led 1.2s ease-in-out infinite; }
+@keyframes pulse-led{ 0%,100%{ opacity:1; } 50%{ opacity:.25; } }
+.streaming .msg-meta::after{
+  content:'· trabalhando…'; color:var(--blue); font-family:var(--font-mono); font-size:10.5px;
+  animation:pulse-led 1.4s ease-in-out infinite; margin-left:4px;
+}
+.stream-final .msg-bubble::after{ content:'✓'; margin-left:6px; color:var(--green); font-weight:700; }
+
+/* ---------- streaming / status de agente ---------- */
+.member.is-working{ box-shadow:0 0 0 1px var(--blue); border-radius:8px; }
+.member.is-working .led{ animation:pulse-led 1.2s ease-in-out infinite; }
+@keyframes pulse-led{ 0%,100%{ opacity:1; } 50%{ opacity:.25; } }
+.streaming .msg-meta::after{
+  content:'· trabalhando…'; color:var(--blue); font-family:var(--font-mono); font-size:10.5px;
+  animation:pulse-led 1.4s ease-in-out infinite; margin-left:4px;
+}
+.stream-final .msg-bubble::after{ content:'✓'; margin-left:6px; color:var(--green); font-weight:700; }
 
 /* ---------- login ---------- */
 #loginOverlay{
