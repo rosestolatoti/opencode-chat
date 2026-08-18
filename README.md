@@ -12,7 +12,103 @@ Painel de comando + chat em tempo real para coordenação de agentes de IA (Linu
 
 ---
 
-## Funcionalidades
+## 11. UPLOAD COM LEGENDA + VISÃO MULTIMODAL (17/08) ✅
+
+### O que foi feito
+
+- **Modal de legenda no upload**: ao clicar 📎 e escolher imagem, abre modal "Enviar imagem" com campo "Legenda (opcional)". Texto vira `caption` da mensagem no chat.
+- **Backend já suportava** (`server.js` linha 408): `content: req.body?.caption || \`📎 ${file.originalname}\`` — só faltava o frontend.
+- **Frontend alterado**: `index.html` (+ modal), `style.css` (+ estilos), `app.js` (+ lógica modal + `caption` no FormData).
+- **Comando `@visao` planejado**: processa última imagem do chat via modelo vision local (LFM2.5-VL-1.6B int4) rodando no Linux.
+
+### Modelos vision baixados (Windows - `C:\NexusModels\`)
+
+| Modelo | Tipo | Tamanho | Uso |
+|--------|------|---------|-----|
+| `LFM2.5-VL-1.6B_int4.litertlm` | Vision-Language (1.6B) | 1.3 GB | Descreve imagem, lê IRPF, balanços, prints |
+| `ppocr_det_fp16.tflite` | OCR Detecção | 10 MB | Localiza texto na imagem |
+| `ppocr_rec_fp16.tflite` | OCR Reconhecimento | 17 MB | Extrai texto literal (números, CPF, tabelas) |
+
+### Próximos passos (pendentes)
+
+- [ ] Baixar `LFM2.5-VL-1.6B_int4.litertlm` no Linux (`~/models/`)
+- [ ] Criar `vision_server.py` no Linux (porta 8765) com `ai-edge-litert` Python
+- [ ] Integrar `bridge.js` → `runVision(node, imageBase64, prompt)` chama HTTP no vision server
+- [ ] Adicionar `@visao` no `orchestrator.js` (extrai último anexo `type='media'` do histórico)
+- [ ] Teste: manda foto + `@visao descreva` → Linux processa → responde no chat
+
+### Otimização mobile (PWA + Compressão Client-Side)
+
+**Problema**: Modal de upload + preview da imagem estoura RAM no Chrome Android (Moto G84, 8GB).
+**Solução implementada**: Opção 1 — PWA otimizado + compressão client-side no `app.js`:
+- `manifest.json` + `sw.js` (Service Worker cache estático) — **IMPLEMENTADO**
+- Compressão no canvas antes do upload: `file → canvas.resize(1280px) → toBlob(0.7)` → payload 3-5MB → 300-500KB — **IMPLEMENTADO**
+- `URL.revokeObjectURL` imediato após preview — **IMPLEMENTADO**
+- Service Worker registrado no boot do `app.js` — **IMPLEMENTADO**
+- `/manifest.json` e `/sw.js` servidos publicamente no `server.js` — **IMPLEMENTADO**
+- Esforço: ~2h, zero install no celular
+
+### Debug de upload mobile (17/08 — rodada 2)
+
+**Sintoma**: No celular (via Tailscale), ao selecionar foto o modal abre mas **nunca chega no botão "Enviar"** — log parava em `MODAL_OPEN`, sem `UPLOAD_START`.
+
+**Causa provável**: Touch events no mobile não disparam `click` no botão `#captionSend` (z-index do backdrop, overlay, ou heurística de toque do Chrome Android).
+
+**Correções aplicadas**:
+- `touchstart` listeners em `#captionSend` e `#captionCancel` com `preventDefault()` e `{ passive: false }` — **IMPLEMENTADO**
+- Pipeline de log detalhado `logUpload(step, data)` no `app.js` — **IMPLEMENTADO**
+  - Grava no `localStorage` (`nexus_upload_logs`, sobrevive a crash/recarregamento)
+  - Envia pro server via `fetch(keepalive)` para `/api/debug/upload-log` — **IMPLEMENTADO**
+  - Server loga `[UPLOAD-LOG-SERVER]` no console (systemd journal)
+  - Handlers globais `error` + `unhandledrejection` salvam crash/reject no localStorage
+- Endpoint `/api/debug/upload-log` no `server.js` — **IMPLEMENTADO**
+
+**Steps de log agora rastreados**:
+| Step | O que significa |
+|------|----------------|
+| `MODAL_OPEN` | Foto selecionada, modal abriu |
+| `CAPTION_SEND_TOUCH` / `CAPTION_SEND_CLICK` | Botão "Enviar" tocado/clicado |
+| `CAPTION_SEND_ENTER` | Enter no textarea |
+| `UPLOAD_START` | Iniciou upload |
+| `COMPRESS_START` | Começou compressão canvas |
+| `COMPRESS_DONE` | Compressão OK (tamanhos) |
+| `COMPRESS_FAIL` | Erro na compressão |
+| `FETCH_START` | Preparou FormData |
+| `FETCH_SENDING` | Vai enviar |
+| `FETCH_RESPONSE` | Server respondeu (status HTTP) |
+| `FETCH_JSON` | Parseou JSON da resposta |
+| `UPLOAD_SUCCESS` | **Sucesso!** |
+| `UPLOAD_API_ERROR` | Server retornou erro |
+| `FETCH_EXCEPTION` | Network error / fetch falhou |
+
+**Como depurar no celular**:
+1. `journalctl --user -u nexus -f` — logs do server em tempo real
+2. Console DevTools (chrome://inspect com USB) → `JSON.parse(localStorage.getItem('nexus_upload_logs'))`
+3. Crash logs: `localStorage.getItem('nexus_last_crash')` / `nexus_last_reject`
+
+**Nota importante**: O User-Agent no server mostra **Linux** porque o tráfego do celular passa pelo Tailscale roteado no PC Linux — isso é normal, não indica problema.
+
+### Arquivos alterados nesta rodada
+
+```
+public/index.html      + modal de legenda (#captionModal), link manifest.json
+public/style.css       + estilos .caption-panel, .primary-btn
+public/app.js          + showCaptionModal/hideCaptionModal, doUploadWithCaption, pendingFile
+                         + compressImage (canvas resize + toBlob quality 0.7)
+                         + Service Worker registration
+                         + logUpload pipeline (localStorage + fetch keepalive)
+                         + touchstart handlers #captionSend / #captionCancel
+public/manifest.json   + NOVO - PWA manifest
+public/sw.js           + NOVO - Service Worker cache estático
+server.js              + rotas públicas /manifest.json e /sw.js
+                         + endpoint /api/debug/upload-log
+bridge.js              (pendente: runVision)
+orchestrator.js        (pendente: @visao + extração de último anexo)
+```
+
+---
+
+## 10. PASTA COMPARTILHADA + CORREÇÕES DE CRASH (16/08, rodada 4) ✅
 
 - **Chat em tempo real** via WebSocket com streaming de resposta dos agentes
 - **Roster da equipe** com status online/offline de cada nó (Tailscale)
