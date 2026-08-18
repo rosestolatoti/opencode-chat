@@ -124,20 +124,24 @@ class Orchestrator {
     const recent = getMessages({ limit: 10 });
     const streamId = `s${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
+    this.broadcast({ type: 'agent_status', stream_id: streamId, from: job.node, phase: 'started', note: job.task.slice(0, 80) });
     this.broadcast({ type: 'stream_start', stream_id: streamId, from: job.node });
     this.broadcast({ type: 'typing', node: job.node, active: true });
 
-    const taskId = addTask({ from: job.opts.from || 'fabio', to: job.node, action: 'execute', payload: { task: job.task, depth } }).id;
+    const taskId = addTask({ from: job.opts.from || 'fabio', to: job.node, action: 'execute', payload: { task: job.task, depth, ref: job.opts.ref || null } }).id;
+    job.taskId = taskId;
 
     await new Promise(resolve => {
       let buffer = '';
+      let child = null;
       const timer = setTimeout(() => {
-        child.kill('SIGKILL');
+        if (child) child.kill('SIGKILL');
+        updateTask(taskId, { status: 'failed', result: `timeout de ${this.timeoutMs / 60000}min` });
+        this.broadcast({ type: 'agent_status', stream_id: streamId, from: job.node, phase: 'error', note: 'timeout' });
         this.broadcast({ type: 'system', text: `⏱️ Timeout de ${this.timeoutMs / 60000}min na tarefa de ${job.node}.` });
         resolve();
       }, this.timeoutMs);
 
-      let child;
       try {
         child = runAgent(job.node, { task: job.task, recent }, {
           onChunk: chunk => {
@@ -161,7 +165,10 @@ class Orchestrator {
             const final = stripAnsi(full).trim();
             const msg = addMessage({ node: job.node, content: final || `(sem resposta${err ? ` — erro: ${err.message}` : ''})`, type: 'text' });
             updateTask(taskId, { status: err ? 'failed' : 'done', result: final || err?.message });
-            this.broadcast({ type: 'message', message: msg });
+            job.fromMsgId = msg.id;
+            // mensagem final carrega o stream_id para o frontend converter o balão (sem duplicar)
+            this.broadcast({ type: 'message', message: { ...msg, stream_id: streamId } });
+            this.broadcast({ type: 'agent_status', stream_id: streamId, from: job.node, phase: err ? 'error' : 'finished' });
             this.resolve(job, final, err, depth);
             resolve();
           },
@@ -170,15 +177,29 @@ class Orchestrator {
         clearTimeout(timer);
         this.broadcast({ type: 'typing', node: job.node, active: false });
         this.broadcast({ type: 'stream_end', stream_id: streamId, from: job.node });
+        this.broadcast({ type: 'agent_status', stream_id: streamId, from: job.node, phase: 'error', note: e.message });
+        updateTask(taskId, { status: 'failed', result: `falha ao iniciar: ${e.message}` });
         addMessage({ node: job.node, content: `❌ Falha ao iniciar: ${e.message}`, type: 'text' });
         resolve();
       }
     });
   }
 
+  withContextRef(text, job) {
+    const base = truncateText(text || job.task, POLICY.MAX_CHARS_TRANSFER);
+    if (!job.taskId && !job.fromMsgId) return base;
+    const ref = job.taskId ? `tarefa #${job.taskId}` : '';
+    const msgs = job.fromMsgId ? `/api/messages?since=${job.fromMsgId - 1}` : '';
+    return `${base}\n\n[CONTEXTO ORIGINAL: ${[ref, msgs].filter(Boolean).join(' · ')} — histórico completo preservado no NEXUS]`;
+  }
+
   async resolve(job, result, err, depth) {
     if (err) {
       this.broadcast({ type: 'system', text: `⚠️ ${job.node} falhou (${err.message}).` });
+      return;
+    }
+    if (depth >= this.maxDelegations) {
+      this.broadcast({ type: 'system', text: '⛔ Limite de delegações atingido. Não repassando adiante.' });
       return;
     }
     const text = result || '';
@@ -187,8 +208,9 @@ class Orchestrator {
       const idx = job.opts.sequential.indexOf(job.node);
       const next = job.opts.sequential[idx + 1];
       if (next) {
+        this.broadcast({ type: 'agent_status', stream_id: `d${Date.now()}`, from: job.node, phase: 'delegated', note: `→ ${next}` });
         this.broadcast({ type: 'system', text: `🔄 ${job.node} concluiu → passando para ${next}…` });
-        this.enqueue(next, truncateText(text || job.task, POLICY.MAX_CHARS_TRANSFER), { from: job.node, sequential: job.opts.sequential });
+        this.enqueue(next, this.withContextRef(text || job.task, job), { from: job.node, sequential: job.opts.sequential, ref: { taskId: job.taskId, fromMsgId: job.fromMsgId } });
         return;
       }
       this.broadcast({ type: 'system', text: `✅ Sequência completa (${job.opts.sequential.join(' → ')}) para o líder.` });
@@ -198,16 +220,17 @@ class Orchestrator {
     const deleg = /DELEGAR:\s*(linux|windows)/i.exec(text);
     if (deleg && (job.opts.autonomous || job.opts.sequential)) {
       const to = deleg[1].toLowerCase();
-      const reason = truncateText(text.replace(/DELEGAR:\s*(linux|windows)/i, '').trim() || 'continue a tarefa', POLICY.MAX_CHARS_TRANSFER);
+      const reason = this.withContextRef(text.replace(/DELEGAR:\s*(linux|windows)/i, '').trim() || 'continue a tarefa', job);
+      this.broadcast({ type: 'agent_status', stream_id: `d${Date.now()}`, from: job.node, phase: 'delegated', note: `→ ${to}` });
       this.broadcast({ type: 'system', text: `🔄 ${job.node} delegou para ${to}: ${reason.slice(0, 100)}` });
-      this.enqueue(to, reason, { from: job.node, autonomous: job.opts.autonomous, sequential: job.opts.sequential });
+      this.enqueue(to, reason, { from: job.node, autonomous: job.opts.autonomous, sequential: job.opts.sequential, ref: { taskId: job.taskId, fromMsgId: job.fromMsgId } });
       return;
     }
     if (job.opts.autonomous && text.includes('TAREFA_COMPLETA') === false && depth < 2) {
       const next = truncateText(text.split('\n').pop()?.trim() || '', POLICY.MAX_CHARS_TRANSFER);
       if (next && next.length > 10 && !next.startsWith('[')) {
         this.broadcast({ type: 'system', text: `🔄 ${job.node} continuando autonomamente…` });
-        this.enqueue(job.node, next, { from: job.node, autonomous: true });
+        this.enqueue(job.node, next, { from: job.node, autonomous: true, ref: { taskId: job.taskId, fromMsgId: job.fromMsgId } });
       }
     }
   }
