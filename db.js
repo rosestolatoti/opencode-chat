@@ -61,6 +61,7 @@ END;
 `);
 
 try { db.exec('ALTER TABLE nodes ADD COLUMN model TEXT'); } catch { /* já existe */ }
+try { db.exec('ALTER TABLE messages ADD COLUMN reply_to INTEGER'); } catch { /* já existe */ }
 
 const nodes = [
   ['linux', 'PC-LINUX', 'subchief', 'linux', LINUX_IP, 'Deepseek v4 Flash'],
@@ -78,30 +79,41 @@ const upsertNode = db.prepare(`
 `);
 for (const n of nodes) upsertNode.run(...n);
 
+const MSG_SELECT = `
+  SELECT m.*, a.filename AS att_filename, a.original_name AS att_original_name,
+         a.mime_type AS att_mime, a.size_bytes AS att_size,
+         ('/uploads/' || a.filename) AS att_url,
+         r.node AS reply_node, substr(r.content, 1, 140) AS reply_preview
+  FROM messages m
+  LEFT JOIN attachments a ON a.message_id = m.id
+  LEFT JOIN messages r ON r.id = m.reply_to`;
+
+export function getMessageById(id) {
+  return db.prepare(`${MSG_SELECT} WHERE m.id = ?`).get(id);
+}
+
 export function getMessages({ since = 0, limit = 100 } = {}) {
   return db.prepare(
-    `SELECT m.*, a.filename AS att_filename, a.original_name AS att_original_name,
-            a.mime_type AS att_mime, a.size_bytes AS att_size,
-            ('/uploads/' || a.filename) AS att_url
-     FROM messages m LEFT JOIN attachments a ON a.message_id = m.id
-     WHERE m.id > ? ORDER BY m.id DESC LIMIT ?`
+    `${MSG_SELECT} WHERE m.id > ? ORDER BY m.id DESC LIMIT ?`
   ).all(since, limit).reverse();
 }
 
-export function addMessage({ node, role = 'agent', content, type = 'text', streamComplete = 1 }) {
+export function addMessage({ node, role = 'agent', content, type = 'text', streamComplete = 1, replyTo = null }) {
   const info = db.prepare(
-    'INSERT INTO messages (node, role, content, type, stream_complete) VALUES (?, ?, ?, ?, ?)'
-  ).run(node, role, content, type, streamComplete ? 1 : 0);
-  return db.prepare('SELECT * FROM messages WHERE id = ?').get(info.lastInsertRowid);
+    'INSERT INTO messages (node, role, content, type, stream_complete, reply_to) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(node, role, content, type, streamComplete ? 1 : 0, Number.isInteger(replyTo) && replyTo > 0 ? replyTo : null);
+  return getMessageById(info.lastInsertRowid);
 }
 
 export function searchMessages(term, { node, type, limit = 50 } = {}) {
   let sql = `SELECT m.*, a.filename AS att_filename, a.original_name AS att_original_name,
                     a.mime_type AS att_mime, a.size_bytes AS att_size,
+                    r.node AS reply_node, substr(r.content, 1, 140) AS reply_preview,
                     bm25(messages_fts) AS rank
              FROM messages_fts
              JOIN messages m ON m.id = messages_fts.rowid
              LEFT JOIN attachments a ON a.message_id = m.id
+             LEFT JOIN messages r ON r.id = m.reply_to
              WHERE messages_fts MATCH ?`;
   const params = [];
   const esc = term.replace(/["*]/g, ' ').trim().split(/\s+/).map(w => `"${w}"`).join(' AND ');

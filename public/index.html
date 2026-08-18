@@ -80,6 +80,13 @@
     <form class="composer" id="composer" autocomplete="off">
       <div class="mention-menu" id="mentionMenu"></div>
       <div id="composerPreview" hidden></div>
+      <div id="replyBar" hidden>
+        <div class="reply-ref">
+          <span id="replyAuthor" class="r-author"></span>
+          <span id="replyText" class="r-text"></span>
+        </div>
+        <button type="button" id="replyCancel" title="Cancelar resposta">✕</button>
+      </div>
       <label class="clip" title="Enviar arquivo">📎
         <input type="file" id="fileInput" hidden>
       </label>
@@ -107,6 +114,12 @@
     <button class="ghost-btn" id="loginBtn" style="width:100%;margin:0">Entrar</button>
     <div class="login-err" id="loginErr" hidden></div>
   </div>
+</div>
+<div id="ctxMenu" hidden>
+  <button data-action="reply">↩ Responder</button>
+  <button data-action="mention">@ Mencionar</button>
+  <button data-action="copy">📋 Copiar</button>
+  <button data-action="select">☑ Selecionar</button>
 </div>
 <div id="lightbox" hidden><img id="lightbox-img" alt=""><span id="lb-close">✕</span></div>
 <div id="fileModal">

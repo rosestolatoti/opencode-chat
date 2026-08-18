@@ -136,13 +136,21 @@ function appendMessageDOM(msg){
   wrap.className = 'msg ' + cls;
   if (msg.id != null) wrap.dataset.messageId = String(msg.id);
   if (msg.content != null) wrap.dataset.messageContent = String(msg.content);
+  if (msg.node != null) wrap.dataset.messageNode = String(msg.node);
   const iconKey = tag === 'you' ? 'person' : tag;
   const avatarHTML = isSystem ? '' : `<div class="avatar accent-${tag === 'you' ? 'human' : tag}">${ICONS[iconKey]}</div>`;
   const model = (msg.node !== 'system' && msg.node !== 'fabio') ? `<span class="model accent-${tag === 'you' ? 'human' : tag}">${escapeHTML(MODELS[msg.node] || '')}</span>` : '';
+  const quote = msg.reply_to
+    ? `<div class="msg-quote" data-reply-to="${Number(msg.reply_to)}">
+        <span class="q-author">↩ ${escapeHTML(DISPLAY[TAG_OF[msg.reply_node]] || msg.reply_node || '?')}</span>
+        <span class="q-text">${escapeHTML((msg.reply_preview || '').slice(0, 140))}</span>
+      </div>`
+    : '';
   wrap.innerHTML = `
     ${avatarHTML}
     <div class="col">
-      <div class="msg-meta"><span>${(msg.created_at || '').slice(11,16) || nowTime()}</span><span class="who accent-${tag === 'you' ? 'human' : tag}">${escapeHTML(DISPLAY[tag] || msg.node)}</span>${model}</div>
+      <div class="msg-meta"><span>${(msg.created_at || '').slice(11,16) || nowTime()}</span><span class="who accent-${tag === 'you' ? 'human' : tag}">${escapeHTML(DISPLAY[tag] || msg.node)}</span>${model}<button class="msg-menu-btn" title="Opções" tabindex="-1">⋮</button></div>
+      ${quote}
       <div class="msg-bubble">${formatText(msg.content || '')}</div>
     </div>`;
   const bubble = wrap.querySelector('.msg-bubble');
@@ -223,6 +231,7 @@ function finalizeStreamAsMessage(m){
   renderAttachment(bubble, m);
   if (m.id != null) el.dataset.messageId = String(m.id);
   if (m.content != null) el.dataset.messageContent = String(m.content);
+  if (m.node != null) el.dataset.messageNode = String(m.node);
   el.classList.remove('streaming', 'stream-final');
   delete streams[m.stream_id];
   if (m.id != null) seen.add(m.id);
@@ -270,8 +279,9 @@ function sendMessage(text){
     const input = $('#messageInput');
     input.value = '';
     autoGrow();
-    ws.send(JSON.stringify({ type:'message', from:'fabio', text }));
+    ws.send(JSON.stringify({ type:'message', text, replyTo: replyTarget ? replyTarget.id : undefined }));
     setActiveNode('you');
+    if (replyTarget) cancelReply();
   }
 }
 
@@ -384,6 +394,114 @@ document.addEventListener('click', e => {
 });
 
 $('#composer').addEventListener('submit', e => { e.preventDefault(); sendMessage(input.value); });
+
+/* ---------- mensagens interativas: menu, reply, copiar, selecionar ---------- */
+let replyTarget = null;
+let ctxMsg = null;
+
+function setReplyTarget(msg){
+  replyTarget = msg;
+  $('#replyAuthor').textContent = DISPLAY[TAG_OF[msg.node]] || msg.node || '?';
+  $('#replyText').textContent = (msg.content || '').slice(0, 140);
+  $('#replyBar').hidden = false;
+  $('#messageInput').focus();
+}
+function cancelReply(){
+  replyTarget = null;
+  $('#replyBar').hidden = true;
+}
+function openCtxMenu(msg, x, y){
+  ctxMsg = msg;
+  const menu = $('#ctxMenu');
+  menu.hidden = false;
+  const pad = 8;
+  menu.style.left = Math.max(pad, Math.min(x, window.innerWidth - menu.offsetWidth - pad)) + 'px';
+  menu.style.top = Math.max(pad, Math.min(y, window.innerHeight - menu.offsetHeight - pad)) + 'px';
+}
+function closeCtxMenu(){
+  $('#ctxMenu').hidden = true;
+  ctxMsg = null;
+  document.body.classList.remove('no-select');
+}
+
+function readMsgFromDom(wrap){
+  if (!wrap) return null;
+  return {
+    id: parseInt(wrap.dataset.messageId, 10) || null,
+    node: wrap.dataset.messageNode || null,
+    content: wrap.dataset.messageContent || wrap.textContent || '',
+  };
+}
+
+$('#transcript').addEventListener('click', e => {
+  const btn = e.target.closest('.msg-menu-btn');
+  if (btn) {
+    e.stopPropagation();
+    const msg = readMsgFromDom(btn.closest('.msg'));
+    if (msg) {
+      const r = btn.getBoundingClientRect();
+      openCtxMenu(msg, r.right, r.bottom + 4);
+    }
+    return;
+  }
+  const quote = e.target.closest('.msg-quote');
+  if (quote) {
+    e.stopPropagation();
+    const target = document.querySelector(`.msg[data-message-id="${quote.dataset.replyTo}"]`);
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      target.classList.add('flash');
+      setTimeout(() => target.classList.remove('flash'), 1600);
+    }
+  }
+});
+
+$('#transcript').addEventListener('contextmenu', e => {
+  const wrap = e.target.closest('.msg');
+  if (!wrap) return;
+  e.preventDefault();
+  const msg = readMsgFromDom(wrap);
+  if (msg) openCtxMenu(msg, e.clientX, e.clientY);
+});
+
+let lpTimer = null;
+$('#transcript').addEventListener('touchstart', e => {
+  const wrap = e.target.closest('.msg');
+  if (!wrap) return;
+  lpTimer = setTimeout(() => {
+    clearTimeout(lpTimer);
+    document.body.classList.add('no-select');
+    navigator.vibrate && navigator.vibrate(40);
+    const msg = readMsgFromDom(wrap);
+    if (msg) {
+      const r = wrap.getBoundingClientRect();
+      openCtxMenu(msg, e.touches[0].clientX, r.top + r.height / 2);
+    }
+  }, 500);
+}, { passive: true });
+['touchmove','touchend','touchcancel'].forEach(ev =>
+  $('#transcript').addEventListener(ev, () => clearTimeout(lpTimer), { passive: true })
+);
+
+$('#ctxMenu').addEventListener('click', e => {
+  const act = e.target.closest('button')?.dataset.action;
+  if (!act || !ctxMsg) return;
+  if (act === 'reply') setReplyTarget(ctxMsg);
+  else if (act === 'mention') {
+    const input = $('#messageInput');
+    input.value += (input.value && !input.value.endsWith(' ') ? ' ' : '') + '@' + ctxMsg.node + ' ';
+    input.focus();
+  } else if (act === 'copy') {
+    navigator.clipboard && navigator.clipboard.writeText(ctxMsg.content).catch(() => {});
+  } else if (act === 'select') {
+    const el = document.querySelector(`.msg[data-message-id="${ctxMsg.id}"]`);
+    if (el) el.classList.toggle('selected');
+  }
+  closeCtxMenu();
+});
+document.addEventListener('click', e => { if (!e.target.closest('#ctxMenu')) closeCtxMenu(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeCtxMenu(); });
+$('#replyCancel').addEventListener('click', cancelReply);
 
 /* ---------- busca (filtra mensagens na tela) ---------- */
 $('#searchInput').addEventListener('input', e => {

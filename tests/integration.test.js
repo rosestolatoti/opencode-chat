@@ -170,3 +170,34 @@ test('WS: mensagem vazia → erro, não salva', async () => {
   assert.ok(got && got.includes('vazia'), `erro recebido: ${got}`);
   ws.close();
 });
+
+test('reply: mensagem com replyTo salva a relação; inválido vira null', async () => {
+  const cookie = await login('fabio');
+  // cria a mensagem original
+  const orig = await (await fetch(`${baseUrl}/api/message`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ text: 'mensagem original para reply' }),
+  })).json();
+  // responde com replyTo válido
+  const r = await fetch(`${baseUrl}/api/message`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ text: 'resposta com reply', replyTo: orig.id }),
+  });
+  assert.equal(r.status, 200);
+  const saved = await r.json();
+  assert.equal(saved.reply_to, orig.id, 'reply_to salvo');
+  // o histórico traz o preview da original
+  const msgs = await (await fetch(`${baseUrl}/api/messages`, { headers: { Cookie: cookie } })).json();
+  const withReply = msgs.messages.find(m => m.id === saved.id);
+  assert.ok(withReply.reply_node, 'reply_node presente');
+  assert.equal(withReply.reply_preview, 'mensagem original para reply', 'reply_preview presente');
+  // replyTo inválido → null
+  const bad = await (await fetch(`${baseUrl}/api/message`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: cookie },
+    body: JSON.stringify({ text: 'reply inválido', replyTo: -5 }),
+  })).json();
+  assert.equal(bad.reply_to, null, 'replyTo inválido vira null');
+});

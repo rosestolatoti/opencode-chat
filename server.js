@@ -174,7 +174,7 @@ wss.on('connection', (ws, req) => {
         let text;
         try { text = normalizeMessage(msg.text); }
         catch (e) { ws.send(JSON.stringify({ type: 'error', error: e.message })); return; }
-        const saved = addMessage({ node: nodeName, content: text, type: msg.mtype || 'text' });
+        const saved = addMessage({ node: nodeName, content: text, type: msg.mtype || 'text', replyTo: Number.isInteger(msg.replyTo) && msg.replyTo > 0 ? msg.replyTo : null });
         broadcast({ type: 'message', message: saved });
         if (nodeName !== 'unknown') handleFabioInput(text, nodeName);
         break;
@@ -386,7 +386,7 @@ server.on('request', (req, res) => {
     if (req.method === 'POST' && p === '/api/message') {
       readJsonBody(req).then(j => {
         const text = normalizeMessage(j.text);
-        const saved = addMessage({ node: session.node, content: text, type: j.type || 'text' });
+        const saved = addMessage({ node: session.node, content: text, type: j.type || 'text', replyTo: Number.isInteger(j.replyTo) && j.replyTo > 0 ? j.replyTo : null });
         broadcast({ type: 'message', message: saved });
         sendJson(res, 200, saved);
       }).catch(e => sendJson(res, e.status || 400, { error: e.message }));
