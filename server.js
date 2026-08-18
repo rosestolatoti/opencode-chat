@@ -9,7 +9,7 @@ import multer from 'multer';
 import mime from 'mime-types';
 import db, {
   getMessages, addMessage, searchMessages, setNodeOnline, getNodes,
-  addTask, getTasks, updateTask, taskStats, addAttachment, systemStats,
+  addTask, getTasks, updateTask, taskStats, addAttachment, systemStats, getMessageById,
 } from './db.js';
 import { Orchestrator, parseCommand } from './orchestrator.js';
 import { PORT, BOOTSTRAP_TOKEN, UPLOAD_DIR, LINUX_IP, WINDOWS_IP, ANDROID_IP, SESSION_TTL_MS } from './config.js';
@@ -116,6 +116,23 @@ function requireAuth(req, res) {
   return s;
 }
 
+/** Valida replyTo: apenas inteiro positivo (number). String/zero/negativo → null. */
+function validReplyTo(v) {
+  if (typeof v !== 'number') return null;
+  return Number.isInteger(v) && v > 0 ? v : null;
+}
+
+/** Valida e confirma existência da mensagem referenciada; null = sem referência; 400 = referência inválida. */
+function checkReplyTo(res, v) {
+  const id = validReplyTo(v);
+  if (id === null) return null;
+  if (!getMessageById(id)) {
+    sendJson(res, 400, { error: 'mensagem de referência não encontrada' });
+    return undefined;
+  }
+  return id;
+}
+
 /* ================== WebSocket ================== */
 
 const server = http.createServer();
@@ -174,7 +191,12 @@ wss.on('connection', (ws, req) => {
         let text;
         try { text = normalizeMessage(msg.text); }
         catch (e) { ws.send(JSON.stringify({ type: 'error', error: e.message })); return; }
-        const saved = addMessage({ node: nodeName, content: text, type: msg.mtype || 'text', replyTo: Number.isInteger(msg.replyTo) && msg.replyTo > 0 ? msg.replyTo : null });
+        const replyTo = validReplyTo(msg.replyTo);
+        if (replyTo !== null && !getMessageById(replyTo)) {
+          ws.send(JSON.stringify({ type: 'error', error: 'mensagem de referência não encontrada' }));
+          return;
+        }
+        const saved = addMessage({ node: nodeName, content: text, type: msg.mtype || 'text', replyTo });
         broadcast({ type: 'message', message: saved });
         if (nodeName !== 'unknown') handleFabioInput(text, nodeName);
         break;
@@ -386,7 +408,9 @@ server.on('request', (req, res) => {
     if (req.method === 'POST' && p === '/api/message') {
       readJsonBody(req).then(j => {
         const text = normalizeMessage(j.text);
-        const saved = addMessage({ node: session.node, content: text, type: j.type || 'text', replyTo: Number.isInteger(j.replyTo) && j.replyTo > 0 ? j.replyTo : null });
+        const replyTo = checkReplyTo(res, j.replyTo);
+        if (replyTo === undefined) return; // 400 já enviado
+        const saved = addMessage({ node: session.node, content: text, type: j.type || 'text', replyTo });
         broadcast({ type: 'message', message: saved });
         sendJson(res, 200, saved);
       }).catch(e => sendJson(res, e.status || 400, { error: e.message }));

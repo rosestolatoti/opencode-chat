@@ -171,33 +171,79 @@ test('WS: mensagem vazia → erro, não salva', async () => {
   ws.close();
 });
 
-test('reply: mensagem com replyTo salva a relação; inválido vira null', async () => {
+test('reply: regras de validação (válido, negativo, zero, string, inexistente, existente)', async () => {
   const cookie = await login('fabio');
-  // cria a mensagem original
-  const orig = await (await fetch(`${baseUrl}/api/message`, {
+  const post = body => fetch(`${baseUrl}/api/message`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Cookie: cookie },
-    body: JSON.stringify({ text: 'mensagem original para reply' }),
-  })).json();
-  // responde com replyTo válido
-  const r = await fetch(`${baseUrl}/api/message`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Cookie: cookie },
-    body: JSON.stringify({ text: 'resposta com reply', replyTo: orig.id }),
+    body: JSON.stringify(body),
   });
-  assert.equal(r.status, 200);
-  const saved = await r.json();
-  assert.equal(saved.reply_to, orig.id, 'reply_to salvo');
-  // o histórico traz o preview da original
+
+  // original (referência válida)
+  const orig = await (await post({ text: 'mensagem original para reply' })).json();
+
+  // 1) replyTo válido/existente → salva com relação
+  const ok = await (await post({ text: 'reply ok', replyTo: orig.id })).json();
+  assert.equal(ok.reply_to, orig.id);
+  assert.equal(ok.reply_node, 'fabio');
+  assert.equal(ok.reply_preview, 'mensagem original para reply');
+
+  // 2) negativo → null (salva sem relação)
+  const neg = await (await post({ text: 'reply neg', replyTo: -5 })).json();
+  assert.equal(neg.reply_to, null);
+
+  // 3) zero → null
+  const zero = await (await post({ text: 'reply zero', replyTo: 0 })).json();
+  assert.equal(zero.reply_to, null);
+
+  // 4) string (mesmo numérica) → null
+  const str = await (await post({ text: 'reply string', replyTo: '5' })).json();
+  assert.equal(str.reply_to, null);
+
+  // 5) inexistente → 400 com mensagem clara (nada salvo)
+  const missing = await post({ text: 'reply fantasma', replyTo: 999999 });
+  assert.equal(missing.status, 400);
+  const missingBody = await missing.json();
+  assert.equal(missingBody.error, 'mensagem de referência não encontrada');
   const msgs = await (await fetch(`${baseUrl}/api/messages`, { headers: { Cookie: cookie } })).json();
-  const withReply = msgs.messages.find(m => m.id === saved.id);
-  assert.ok(withReply.reply_node, 'reply_node presente');
-  assert.equal(withReply.reply_preview, 'mensagem original para reply', 'reply_preview presente');
-  // replyTo inválido → null
-  const bad = await (await fetch(`${baseUrl}/api/message`, {
+  assert.ok(!msgs.messages.some(m => m.content === 'reply fantasma'), 'mensagem fantasma NÃO foi salva');
+
+  // 6) existente após reload (relação persiste no histórico)
+  const hist = await (await fetch(`${baseUrl}/api/messages`, { headers: { Cookie: cookie } })).json();
+  const persisted = hist.messages.find(m => m.id === ok.id);
+  assert.equal(persisted.reply_to, orig.id);
+  assert.equal(persisted.reply_node, 'fabio');
+});
+
+test('reply via WebSocket: broadcast com relação correta + persiste no histórico', async () => {
+  const WebSocket = (await import('ws')).default;
+  const cookie = await login('linux');
+  const post = body => fetch(`${baseUrl}/api/message`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Cookie: cookie },
-    body: JSON.stringify({ text: 'reply inválido', replyTo: -5 }),
-  })).json();
-  assert.equal(bad.reply_to, null, 'replyTo inválido vira null');
+    body: JSON.stringify(body),
+  });
+  const orig = await (await post({ text: 'WS_ORIGINAL_123' })).json();
+
+  const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`, { headers: { Cookie: cookie } });
+  const received = await new Promise(res => {
+    ws.on('open', () => ws.send(JSON.stringify({ type: 'message', text: 'WS_REPLY_123', replyTo: orig.id })));
+    ws.on('message', d => {
+      const m = JSON.parse(d);
+      if (m.type === 'message' && m.message && m.message.content === 'WS_REPLY_123') res(m.message);
+    });
+    setTimeout(() => res(null), 5000);
+  });
+  assert.ok(received, 'broadcast recebido');
+  assert.equal(received.reply_to, orig.id, 'reply_to no broadcast');
+  assert.equal(received.reply_node, 'linux', 'reply_node no broadcast');
+  assert.equal(received.reply_preview, 'WS_ORIGINAL_123', 'reply_preview no broadcast');
+  assert.ok(Number.isInteger(received.id), 'message_id presente');
+
+  // reload via HTTP: relação preservada
+  const hist = await (await fetch(`${baseUrl}/api/messages`, { headers: { Cookie: cookie } })).json();
+  const persisted = hist.messages.find(m => m.id === received.id);
+  assert.equal(persisted.reply_to, orig.id);
+  assert.equal(persisted.reply_preview, 'WS_ORIGINAL_123');
+  ws.close();
 });

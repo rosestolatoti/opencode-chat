@@ -61,7 +61,7 @@ function renderRoster(nodes){
     const working = activeAgent && activeAgent.node === n.name ? ' is-working' : '';
     return `
       <div class="member${working}" data-tag="${tag}">
-        <div class="icon accent-${tag === 'you' ? 'human' : tag}">${ICONS[tag === 'you' ? 'person' : tag]}</div>
+        <div class="icon accent-${tag === 'you' ? 'human' : tag}">${iconFor(n.name)}</div>
         <div class="member-info">
           <div class="name">${escapeHTML(n.display_name)}</div>
           <div class="model">${escapeHTML(n.model || n.role || '')}</div>
@@ -138,18 +138,19 @@ function appendMessageDOM(msg){
   if (msg.content != null) wrap.dataset.messageContent = String(msg.content);
   if (msg.node != null) wrap.dataset.messageNode = String(msg.node);
   const iconKey = tag === 'you' ? 'person' : tag;
-  const avatarHTML = isSystem ? '' : `<div class="avatar accent-${tag === 'you' ? 'human' : tag}">${ICONS[iconKey]}</div>`;
-  const model = (msg.node !== 'system' && msg.node !== 'fabio') ? `<span class="model accent-${tag === 'you' ? 'human' : tag}">${escapeHTML(MODELS[msg.node] || '')}</span>` : '';
-  const quote = msg.reply_to
+  const avatarHTML = isSystem ? '' : `<div class="avatar accent-${tag === 'you' ? 'human' : tag}">${iconFor(msg.node)}</div>`;
+  const model = (msg.node !== 'system' && msg.node !== 'fabio') ? `<span class="model accent-${tag === 'you' ? 'human' : tag}">${escapeHTML(modelFor(msg.node))}</span>` : '';
+  // quote só quando a referência existe (nunca "↩ ?")
+  const quote = (msg.reply_to && msg.reply_node)
     ? `<div class="msg-quote" data-reply-to="${Number(msg.reply_to)}">
-        <span class="q-author">↩ ${escapeHTML(DISPLAY[TAG_OF[msg.reply_node]] || msg.reply_node || '?')}</span>
+        <span class="q-author">↩ ${escapeHTML(nameFor(msg.reply_node))}</span>
         <span class="q-text">${escapeHTML((msg.reply_preview || '').slice(0, 140))}</span>
       </div>`
     : '';
   wrap.innerHTML = `
     ${avatarHTML}
     <div class="col">
-      <div class="msg-meta"><span>${(msg.created_at || '').slice(11,16) || nowTime()}</span><span class="who accent-${tag === 'you' ? 'human' : tag}">${escapeHTML(DISPLAY[tag] || msg.node)}</span>${model}<button class="msg-menu-btn" title="Opções" tabindex="-1">⋮</button></div>
+      <div class="msg-meta"><span>${(msg.created_at || '').slice(11,16) || nowTime()}</span><span class="who accent-${tag === 'you' ? 'human' : tag}">${escapeHTML(nameFor(msg.node))}</span>${model}<button class="msg-menu-btn" aria-label="Opções da mensagem" title="Opções">⋮</button></div>
       ${quote}
       <div class="msg-bubble">${formatText(msg.content || '')}</div>
     </div>`;
@@ -208,7 +209,7 @@ function updateAgentStatus(m){
     : null;
   if (activeAgent) {
     const label = m.phase === 'delegated' ? '→ delegando…' : 'trabalhando…';
-    $('#headerMeta').textContent = `${DISPLAY[TAG_OF[m.from]] || m.from} ${label}`;
+    $('#headerMeta').textContent = `${nameFor(m.from)} ${label}`;
   } else if (lastHeaderMeta) {
     $('#headerMeta').textContent = lastHeaderMeta;
   }
@@ -401,7 +402,7 @@ let ctxMsg = null;
 
 function setReplyTarget(msg){
   replyTarget = msg;
-  $('#replyAuthor').textContent = DISPLAY[TAG_OF[msg.node]] || msg.node || '?';
+  $('#replyAuthor').textContent = nameFor(msg.node);
   $('#replyText').textContent = (msg.content || '').slice(0, 140);
   $('#replyBar').hidden = false;
   $('#messageInput').focus();
@@ -417,6 +418,7 @@ function openCtxMenu(msg, x, y){
   const pad = 8;
   menu.style.left = Math.max(pad, Math.min(x, window.innerWidth - menu.offsetWidth - pad)) + 'px';
   menu.style.top = Math.max(pad, Math.min(y, window.innerHeight - menu.offsetHeight - pad)) + 'px';
+  menu.querySelector('button')?.focus();
 }
 function closeCtxMenu(){
   $('#ctxMenu').hidden = true;
@@ -429,8 +431,32 @@ function readMsgFromDom(wrap){
   return {
     id: parseInt(wrap.dataset.messageId, 10) || null,
     node: wrap.dataset.messageNode || null,
-    content: wrap.dataset.messageContent || wrap.textContent || '',
+    content: wrap.dataset.messageContent !== undefined ? wrap.dataset.messageContent : '',
   };
+}
+
+/* ---------- identidade visual central (nunca undefined/null/? para o usuário) ---------- */
+function nameFor(node){
+  const tag = TAG_OF[node] || 'linux';
+  return DISPLAY[tag] || node || 'desconhecido';
+}
+function iconFor(node){
+  const tag = TAG_OF[node] || 'linux';
+  return ICONS[tag === 'you' ? 'person' : tag] || ICONS.person || '👤';
+}
+function modelFor(node){
+  return MODELS[node] || '';
+}
+
+/* ---------- toast ---------- */
+let toastTimer = null;
+function showToast(text, isError = false){
+  const t = $('#toast');
+  t.textContent = text;
+  t.classList.toggle('is-error', isError);
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 1800);
 }
 
 $('#transcript').addEventListener('click', e => {
@@ -468,9 +494,10 @@ let lpTimer = null;
 $('#transcript').addEventListener('touchstart', e => {
   const wrap = e.target.closest('.msg');
   if (!wrap) return;
+  // bloqueia seleção nativa DESDE o início do toque (não só após 500ms)
+  document.body.classList.add('no-select');
   lpTimer = setTimeout(() => {
     clearTimeout(lpTimer);
-    document.body.classList.add('no-select');
     navigator.vibrate && navigator.vibrate(40);
     const msg = readMsgFromDom(wrap);
     if (msg) {
@@ -480,7 +507,10 @@ $('#transcript').addEventListener('touchstart', e => {
   }, 500);
 }, { passive: true });
 ['touchmove','touchend','touchcancel'].forEach(ev =>
-  $('#transcript').addEventListener(ev, () => clearTimeout(lpTimer), { passive: true })
+  $('#transcript').addEventListener(ev, () => {
+    clearTimeout(lpTimer);
+    document.body.classList.remove('no-select');
+  }, { passive: true })
 );
 
 $('#ctxMenu').addEventListener('click', e => {
@@ -492,7 +522,14 @@ $('#ctxMenu').addEventListener('click', e => {
     input.value += (input.value && !input.value.endsWith(' ') ? ' ' : '') + '@' + ctxMsg.node + ' ';
     input.focus();
   } else if (act === 'copy') {
-    navigator.clipboard && navigator.clipboard.writeText(ctxMsg.content).catch(() => {});
+    const raw = ctxMsg.content;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(raw)
+        .then(() => showToast('Copiado ✓'))
+        .catch(() => showToast('Falha ao copiar', true));
+    } else {
+      showToast('Clipboard não disponível neste navegador', true);
+    }
   } else if (act === 'select') {
     const el = document.querySelector(`.msg[data-message-id="${ctxMsg.id}"]`);
     if (el) el.classList.toggle('selected');
@@ -730,6 +767,9 @@ function handleWsMessage(ev) {
       break;
     case 'agent_status':
       updateAgentStatus(m);
+      break;
+    case 'error':
+      showToast(m.error || 'erro', true);
       break;
     case 'typing':
       if (m.active) typingNodes.add(m.node); else typingNodes.delete(m.node);

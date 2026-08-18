@@ -333,3 +333,16 @@ body.no-select{ user-select:none; -webkit-user-select:none; }
   font-size:13px; color:var(--ink); border-radius:6px; cursor:pointer; text-align:left;
 }
 #ctxMenu button:hover{ background:var(--surface-sunken); }
+
+/* ---------- toast + acessibilidade ---------- */
+#toast{
+  position:fixed; left:50%; bottom:26px; transform:translateX(-50%) translateY(16px);
+  background:#1e2b1e; color:#e8f0e8; border:1px solid var(--line-strong); border-radius:8px;
+  padding:8px 16px; font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,.25);
+  opacity:0; pointer-events:none; transition:opacity .18s ease, transform .18s ease; z-index:300;
+}
+#toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+#toast.is-error{ background:#3a1d1a; color:#ffd9d4; border-color:#b3261e; }
+body.no-select{ -webkit-touch-callout:none; -webkit-user-select:none; user-select:none; }
+.msg-menu-btn:focus-visible{ outline:2px solid var(--blue); outline-offset:1px; }
+#ctxMenu button:focus-visible{ outline:2px solid var(--blue); outline-offset:-1px; }
