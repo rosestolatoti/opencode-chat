@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { fileCategory, fileCategoryType, parseCookies, resolveInside, truncateText, parseJsonBody } from '../lib/util.js';
+import { fileCategory, fileCategoryType, parseCookies, resolveInside, truncateText, parseJsonBody, extractMentions, stripMentions } from '../lib/util.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -55,4 +55,29 @@ test('parseJsonBody: aceita JSON válido e rejeita inválido/grande', () => {
   assert.deepEqual(parseJsonBody(''), {});
   assert.throws(() => parseJsonBody('{quebrado'), /JSON inválido/);
   assert.throws(() => parseJsonBody(JSON.stringify({ big: 'x'.repeat(2000) }), 100), /corpo muito grande/);
+});
+test('extractMentions: detecta menções em QUALQUER posição e múltiplas', () => {
+  assert.deepEqual(extractMentions('@linux analise o pdf'), ['linux']);
+  assert.deepEqual(extractMentions('Confira as páginas 12-18. @linux analise'), ['linux'], 'menção no meio');
+  assert.deepEqual(extractMentions('Veja isso @windows'), ['windows'], 'menção no fim');
+  assert.deepEqual(extractMentions('PDF + @linux + @windows + @linux'), ['linux', 'windows'], 'múltiplas sem duplicar');
+  assert.deepEqual(extractMentions('analise @Linux e @WINDOWS'), ['linux', 'windows'], 'case-insensitive');
+  assert.deepEqual(extractMentions('texto sem menção'), []);
+  assert.deepEqual(extractMentions(''), []);
+  assert.deepEqual(extractMentions('email@linux.com'), [], 'não confunde email');
+});
+
+test('stripMentions: remove menções e normaliza espaços', () => {
+  assert.equal(stripMentions('Confira as páginas 12-18. @linux analise'), 'Confira as páginas 12-18. analise');
+  assert.equal(stripMentions('@linux @windows valide'), 'valide');
+  assert.equal(stripMentions('sem menção aqui'), 'sem menção aqui');
+});
+
+test('fileCategoryType: banco de dados e demais extensões', () => {
+  assert.equal(fileCategoryType('dados.db'), 'db');
+  assert.equal(fileCategoryType('planilha.xlsx'), 'spreadsheet');
+  assert.equal(fileCategoryType('dados.csv'), 'spreadsheet');
+  assert.equal(fileCategoryType('documento.docx'), 'doc');
+  assert.equal(fileCategoryType('notas.md'), 'code');
+  assert.equal(fileCategoryType('site.html'), 'code');
 });

@@ -215,6 +215,75 @@ test('reply: regras de validação (válido, negativo, zero, string, inexistente
   assert.equal(persisted.reply_node, 'fabio');
 });
 
+test('upload: mensagem-anexo com metadados por tipo (png/pdf/mp3)', async () => {
+  const cookie = await login('fabio');
+
+  // PNG real 1x1 (gerado com zlib)
+  const zlib = await import('node:zlib');
+  const crc32 = await import('node:zlib');
+  function pngBytes() {
+    const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const chunk = (type, data) => {
+      const t = Buffer.from(type);
+      const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+      const body = Buffer.concat([t, data]);
+      const crc = Buffer.alloc(4); crc.writeUInt32BE(zlib.crc32(body) >>> 0);
+      return Buffer.concat([len, body, crc]);
+    };
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(1, 0); ihdr.writeUInt32BE(1, 4); ihdr[8] = 8; ihdr[9] = 2;
+    const idat = zlib.deflateSync(Buffer.from([0, 255, 0, 0, 255, 0]));
+    return Buffer.concat([sig, chunk('IHDR', ihdr), chunk('IDAT', idat), chunk('IEND', Buffer.alloc(0))]);
+  }
+  // PDF fake com 3 páginas
+  const pdfBuf = Buffer.from('%PDF-1.4\n/Type /Catalog\n/Pages << /Count 3 >>\n/Type /Page\n/Type /Page\n/Type /Page\n%%EOF');
+
+  const up = async (name, buf, caption, mime) => {
+    const fd = new FormData();
+    fd.append('file', new Blob([buf], { type: mime }), name);
+    if (caption) fd.append('caption', caption);
+    return fetch(`${baseUrl}/api/upload`, { method: 'POST', headers: { Cookie: cookie }, body: fd });
+  };
+
+  const png = await (await up('minha_foto.png', pngBytes(), '', 'image/png')).json();
+  assert.equal(png.attachment.kind, 'image', 'png → image');
+  assert.equal(png.attachment.width, 1, 'width detectado');
+  assert.equal(png.attachment.height, 1, 'height detectado');
+  assert.equal(png.attachment.mime_type, 'image/png');
+
+  const pdfRes = await (await up('relatorio.pdf', pdfBuf, 'Confira as páginas 12-18.', 'application/pdf')).json();
+  assert.equal(pdfRes.attachment.kind, 'pdf', 'pdf → pdf');
+  assert.equal(pdfRes.attachment.pages, 3, 'páginas detectadas');
+
+  const mp3 = await (await up('audio_teste.mp3', Buffer.from('ID3 fake mp3 bytes que o ffprobe rejeita'), '', 'audio/mpeg')).json();
+  assert.equal(mp3.attachment.kind, 'audio', 'mp3 → audio');
+  assert.equal(mp3.attachment.duration_ms, null, 'duração desconhecida → null (fallback seguro)');
+
+  // mensagem-anexo aparece no histórico com att_kind
+  const msgs = await (await fetch(`${baseUrl}/api/messages`, { headers: { Cookie: cookie } })).json();
+  const found = msgs.messages.find(m => m.id === pdfRes.message.id);
+  assert.equal(found.att_kind, 'pdf');
+  assert.equal(found.att_pages, 3);
+  assert.equal(found.content, 'Confira as páginas 12-18.', 'legenda preservada');
+});
+
+test('upload pdf REAL gera thumbnail da 1ª página', async () => {
+  const cookie = await login('fabio');
+  const { execFileSync } = await import('child_process');
+  const pdfPath = path.join(BASE, 'real.pdf');
+  execFileSync('gs', ['-q', '-sDEVICE=pdfwrite', '-dNOPAUSE', '-dBATCH', '-sOutputFile=' + pdfPath,
+    '-c', '/Helvetica findfont 20 scalefont setfont 72 700 moveto (NEXUS) show showpage']);
+  const fd = new FormData();
+  fd.append('file', new Blob([fs.readFileSync(pdfPath)], { type: 'application/pdf' }), 'relatorio_real.pdf');
+  const j = await (await fetch(`${baseUrl}/api/upload`, { method: 'POST', headers: { Cookie: cookie }, body: fd })).json();
+  assert.equal(j.attachment.kind, 'pdf');
+  assert.ok(j.attachment.thumb, 'thumbnail gerada: ' + j.attachment.thumb);
+  assert.ok(j.attachment.thumb.startsWith('/uploads/.thumbs/'), 'thumb dentro de .thumbs');
+  // arquivo físico existe
+  const thumbAbs = path.join(BASE, 'uploads', j.attachment.thumb.replace('/uploads/', ''));
+  assert.ok(fs.existsSync(thumbAbs), 'arquivo do thumb no disco');
+});
+
 test('reply via WebSocket: broadcast com relação correta + persiste no histórico', async () => {
   const WebSocket = (await import('ws')).default;
   const cookie = await login('linux');

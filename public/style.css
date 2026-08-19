@@ -242,6 +242,7 @@ pre{ background:#161B17; color:#E8EDE4; padding:12px; border-radius:4px; overflo
 .fm-card.cat-code .fm-ic{ color:#16707D; }
 .fm-card.cat-doc .fm-ic{ color:#5B6B7A; }
 .fm-card.cat-other .fm-ic{ color:var(--ink-dim); }
+.fm-card.cat-db .fm-ic{ color:#7C4DDB; }
 .fm-card.cat-image .fm-prev{ background:#EAF4EE; }
 .fm-card.cat-video .fm-prev{ background:#F1ECFA; }
 .fm-card.cat-audio .fm-prev{ background:#FBF3E3; }
@@ -251,6 +252,7 @@ pre{ background:#161B17; color:#E8EDE4; padding:12px; border-radius:4px; overflo
 .fm-card.cat-code .fm-prev{ background:#E7F4F6; }
 .fm-card.cat-doc .fm-prev{ background:#EEF1F4; }
 .fm-card.cat-other .fm-prev{ background:#F0F1EE; }
+.fm-card.cat-db .fm-prev{ background:#EFE8FC; }
 .fm-card.cat-image .fm-prev{ background:#111; }
 
 .fm-empty{ color:var(--ink-dim); font-size:13px; text-align:center; padding:32px 0; }
@@ -346,3 +348,62 @@ body.no-select{ user-select:none; -webkit-user-select:none; }
 body.no-select{ -webkit-touch-callout:none; -webkit-user-select:none; user-select:none; }
 .msg-menu-btn:focus-visible{ outline:2px solid var(--blue); outline-offset:1px; }
 #ctxMenu button:focus-visible{ outline:2px solid var(--blue); outline-offset:-1px; }
+
+/* ---------- cartões de anexo (mensagem-anexo) ---------- */
+.msg-bubble .att-card{
+  display:flex; flex-direction:column; border:1px solid var(--line); border-radius:10px;
+  overflow:hidden; background:var(--surface); text-decoration:none; color:inherit;
+  width:min(430px, calc(100vw - 150px)); min-width:min(430px, calc(100vw - 150px));
+  margin:6px 0 2px; transition:border-color .12s ease, transform .12s ease;
+}
+.msg-bubble .att-card:hover{ border-color:var(--line-strong); transform:translateY(-1px); }
+.att-preview{
+  aspect-ratio:16/9; display:flex; align-items:center; justify-content:center; overflow:hidden;
+  background:var(--surface-sunken); color:var(--ink-dim);
+}
+.att-preview svg{ width:66px; height:66px; filter:drop-shadow(0 3px 7px rgba(0,0,0,.22)); }
+.att-preview img{ width:100%; height:100%; object-fit:cover; display:block; }
+.att-body{ padding:9px 12px 10px; display:flex; flex-direction:column; gap:3px; }
+.att-name{ font-size:12.5px; font-weight:600; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.att-meta{ font-family:var(--font-mono); font-size:10.5px; color:var(--ink-dim); text-transform:uppercase; letter-spacing:.03em; }
+
+.att-card.kind-image .att-preview{ background:linear-gradient(135deg,#18212C,#22303F); }
+.att-card.kind-image .att-preview svg{ color:#ddd; }
+.att-card.kind-pdf .att-preview{ background:linear-gradient(135deg,#FDE9E7,#F1C4BE); }
+.att-card.kind-audio .att-preview{ background:linear-gradient(135deg,#FDF2D9,#F3D692); }
+.att-card.kind-video .att-preview{ background:linear-gradient(135deg,#F1EBFB,#D8C8F4); }
+.att-card.kind-doc .att-preview{ background:linear-gradient(135deg,#F1F4F7,#D8DFE7); }
+.att-card.kind-archive .att-preview{ background:linear-gradient(135deg,#E8EDFD,#C6D4F7); }
+.att-card.kind-spreadsheet .att-preview{ background:linear-gradient(135deg,#E6F6ED,#C5E9D5); }
+.att-card.kind-code .att-preview{ background:linear-gradient(135deg,#E4F6F8,#C0E4EA); }
+.att-card.kind-other .att-preview{ background:linear-gradient(135deg,#F1F2F3,#DADFE4); }
+.att-card.kind-db .att-preview{ background:linear-gradient(135deg,#EFE8FC,#D5C4F5); }
+
+/* ---------- preview de PDF (thumb real) ---------- */
+.att-preview img.att-thumb-pdf{ object-fit:contain; background:#fff; }
+.att-card.kind-pdf .att-preview{ background:#fff; }
+
+/* ---------- selo de extensão no cartão ---------- */
+.att-preview{ position:relative; }
+.att-ext-big{
+  font-family:var(--font-mono); font-size:26px; font-weight:800; letter-spacing:.02em;
+  color:var(--kind-c, #3a3f45); line-height:1;
+  text-shadow:0 2px 12px rgba(0,0,0,.18);
+  padding-bottom:2px;
+}
+.att-ext-media{
+  position:absolute; left:0; right:0; bottom:0; text-align:center; z-index:2;
+  font-family:var(--font-mono); font-size:15px; font-weight:700; letter-spacing:.08em;
+  color:#fff; background:rgba(0,0,0,.55); backdrop-filter:blur(3px);
+  padding:6px 0 7px; border-top:1px solid rgba(255,255,255,.14);
+}
+.att-card.kind-pdf{ --kind-c:#C62A24; }
+.att-card.kind-audio{ --kind-c:#B97B07; }
+.att-card.kind-video{ --kind-c:#6A3FB5; }
+.att-card.kind-image{ --kind-c:#1B7F4B; }
+.att-card.kind-archive{ --kind-c:#2247C4; }
+.att-card.kind-spreadsheet{ --kind-c:#1E7B4F; }
+.att-card.kind-code{ --kind-c:#16707D; }
+.att-card.kind-doc{ --kind-c:#4B5C6D; }
+.att-card.kind-other{ --kind-c:#5C6670; }
+.att-card.kind-db{ --kind-c:#7C4DDB; }

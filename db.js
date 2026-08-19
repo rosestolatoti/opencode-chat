@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { DB_PATH, LINUX_IP, WINDOWS_IP, ANDROID_IP } from './config.js';
+import { fileCategoryType } from './lib/util.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const db = new Database(DB_PATH);
@@ -62,6 +63,16 @@ END;
 
 try { db.exec('ALTER TABLE nodes ADD COLUMN model TEXT'); } catch { /* já existe */ }
 try { db.exec('ALTER TABLE messages ADD COLUMN reply_to INTEGER'); } catch { /* já existe */ }
+try { db.exec('ALTER TABLE attachments ADD COLUMN kind TEXT'); } catch { /* já existe */ }
+try { db.exec('ALTER TABLE attachments ADD COLUMN duration_ms INTEGER'); } catch { /* já existe */ }
+try { db.exec('ALTER TABLE attachments ADD COLUMN thumb TEXT'); } catch { /* já existe */ }
+
+// backfill: anexos antigos (kind NULL) ganham o tipo derivado da extensão
+{
+  const rows = db.prepare('SELECT id, filename FROM attachments WHERE kind IS NULL OR kind = \'\'').all();
+  const st = db.prepare('UPDATE attachments SET kind = ? WHERE id = ?');
+  for (const r of rows) st.run(fileCategoryType(r.filename), r.id);
+}
 
 const nodes = [
   ['linux', 'PC-LINUX', 'subchief', 'linux', LINUX_IP, 'Deepseek v4 Flash'],
@@ -82,6 +93,9 @@ for (const n of nodes) upsertNode.run(...n);
 const MSG_SELECT = `
   SELECT m.*, a.filename AS att_filename, a.original_name AS att_original_name,
          a.mime_type AS att_mime, a.size_bytes AS att_size,
+         a.kind AS att_kind, a.duration_ms AS att_duration_ms,
+         a.width AS att_width, a.height AS att_height, a.pages AS att_pages,
+         a.thumb AS att_thumb,
          ('/uploads/' || a.filename) AS att_url,
          r.node AS reply_node, substr(r.content, 1, 140) AS reply_preview
   FROM messages m
@@ -159,10 +173,11 @@ export function taskStats() {
   ).all();
 }
 
-export function addAttachment({ messageId, filename, originalName, mimeType, sizeBytes }) {
+export function addAttachment({ messageId, filename, originalName, mimeType, sizeBytes, kind = null, pages = null, durationMs = null, width = null, height = null, thumb = null }) {
   const info = db.prepare(
-    'INSERT INTO attachments (message_id, filename, original_name, mime_type, size_bytes) VALUES (?, ?, ?, ?, ?)'
-  ).run(messageId, filename, originalName, mimeType, sizeBytes);
+    `INSERT INTO attachments (message_id, filename, original_name, mime_type, size_bytes, kind, pages, duration_ms, width, height, thumb)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(messageId, filename, originalName, mimeType, sizeBytes, kind, pages, durationMs, width, height, thumb);
   return db.prepare('SELECT * FROM attachments WHERE id = ?').get(info.lastInsertRowid);
 }
 

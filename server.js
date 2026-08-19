@@ -13,7 +13,7 @@ import db, {
 } from './db.js';
 import { Orchestrator, parseCommand } from './orchestrator.js';
 import { PORT, BOOTSTRAP_TOKEN, UPLOAD_DIR, LINUX_IP, WINDOWS_IP, ANDROID_IP, SESSION_TTL_MS } from './config.js';
-import { SUBDIRS, fileCategory, fileCategoryType, parseCookies, resolveInside, parseJsonBody, normalizeMessage } from './lib/util.js';
+import { SUBDIRS, fileCategory, fileCategoryType, parseCookies, resolveInside, parseJsonBody, normalizeMessage, extractMentions, stripMentions } from './lib/util.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const STATIC = path.join(__dirname, 'public');
@@ -225,6 +225,18 @@ setInterval(() => {
 }, 30000);
 
 async function handleFabioInput(text, from = 'fabio') {
+  const mentions = extractMentions(text);
+  if (mentions.length > 0) {
+    // menções são entidades: cada uma vira uma tarefa com o mesmo prompt
+    const prompt = stripMentions(text);
+    const recent = getMessages({ limit: 10 });
+    let anyRefused = false;
+    for (const target of mentions) {
+      const r = await orch.handleCommand({ target, prompt: prompt || text, from, recent });
+      if (r && r.ok === false) anyRefused = true;
+    }
+    return anyRefused ? { ok: false, error: 'algumas ações foram recusadas' } : { ok: true, queued: true };
+  }
   const { target, prompt } = parseCommand(text);
   if (target === 'chat') return { ok: true, note: 'chat' };
   if (prompt || target === 'status' || target === 'pause' || target === 'resume') {
@@ -238,13 +250,79 @@ async function handleFabioInput(text, from = 'fabio') {
 const upload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => cb(null, path.join(UPLOAD_DIR, fileCategory(file.originalname))),
-    filename: (req, file, cb) => cb(null, `${Date.now()}_${file.originalname.replace(/[^\w.\-]/g, '_')}`),
+    filename: (req, file, cb) => {
+      // nome limpo (sem timestamp); colisão → sufixo " (n)"
+      const stem = path.basename(file.originalname, path.extname(file.originalname)).replace(/[^\w.\- ]/g, '_');
+      const ext = path.extname(file.originalname);
+      const dest = path.join(UPLOAD_DIR, fileCategory(file.originalname));
+      let name = stem + ext;
+      let i = 1;
+      while (fs.existsSync(path.join(dest, name))) name = `${stem} (${i++})${ext}`;
+      cb(null, name);
+    },
   }),
   limits: { fileSize: 100 * 1024 * 1024 },
 });
 
-async function listUploads() {
-  const items = [];
+/** Extrai metadados do arquivo enviado (páginas PDF, duração áudio/vídeo, dimensões de imagem). */
+function probeMeta(filePath, kind) {
+  return new Promise(resolve => {
+    const meta = {};
+    let pending = 0;
+    const done = () => { if (--pending <= 0) resolve(meta); };
+
+    if (kind === 'image') {
+      pending++;
+      execFile('identify', ['-format', '%wx%h', filePath], { timeout: 5000 }, (e, out) => {
+        if (!e && out) {
+          const [w, h] = out.split('x');
+          meta.width = parseInt(w, 10);
+          meta.height = parseInt(h, 10);
+        }
+        done();
+      });
+    }
+    if (kind === 'pdf') {
+      pending++;
+      fs.readFile(filePath, 'utf8', (e, txt) => {
+        if (!e && txt) {
+          const m = txt.match(/\/Count\s+(\d+)/);
+          if (m) meta.pages = parseInt(m[1], 10);
+          else {
+            const c = (txt.match(/\/Type\s*\/Page[^s]/g) || []).length;
+            if (c) meta.pages = c;
+          }
+        }
+        done();
+      });
+      // thumbnail da 1ª página (pdftoppm); falha silenciosa → fallback ícone
+      pending++;
+      const thumbsDir = path.join(UPLOAD_DIR, '.thumbs');
+      fs.mkdirSync(thumbsDir, { recursive: true });
+      const thumbBase = path.join(thumbsDir, path.basename(filePath, path.extname(filePath)));
+      execFile('pdftoppm', ['-png', '-r', '60', '-f', '1', '-l', '1', filePath, thumbBase], { timeout: 15000 }, (e) => {
+        if (!e) {
+          const out = fs.readdirSync(thumbsDir).find(f => f.startsWith(path.basename(filePath, path.extname(filePath))) && f.endsWith('.png'));
+          if (out) meta.thumb = `/uploads/.thumbs/${out}`;
+        }
+        done();
+      });
+    }
+    if (kind === 'audio' || kind === 'video') {
+      pending++;
+      execFile('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', filePath], { timeout: 8000 }, (e, out) => {
+        if (!e && out) {
+          const d = parseFloat(out.trim());
+          if (Number.isFinite(d)) meta.durationMs = Math.round(d * 1000);
+        }
+        done();
+      });
+    }
+    if (pending === 0) resolve(meta);
+  });
+}
+
+async function listUploads() {  const items = [];
   const walk = async (dirAbs, relPrefix) => {
     let entries;
     try { entries = await fs.promises.readdir(dirAbs, { withFileTypes: true }); }
@@ -438,18 +516,31 @@ server.on('request', (req, res) => {
     }
 
     if (req.method === 'POST' && p === '/api/upload') {
-      upload.single('file')(req, res, (err) => {
+      upload.single('file')(req, res, async (err) => {
         if (err) { sendJson(res, 400, { error: err.message }); return; }
         if (!req.file) { sendJson(res, 400, { error: 'nenhum arquivo enviado' }); return; }
         try {
           const file = req.file;
           const sub = fileCategory(file.originalname);
           const relPath = `${sub}/${file.filename}`;
-          const savedMsg = addMessage({ node: session.node, content: req.body?.caption || `📎 ${file.originalname}`, type: 'media' });
-          addAttachment({ messageId: savedMsg.id, filename: relPath, originalName: file.originalname, mimeType: file.mimetype, sizeBytes: file.size });
-          const att = { filename: relPath, original_name: file.originalname, mime_type: file.mimetype, size_bytes: file.size, url: `/uploads/${relPath}` };
+          const fullPath = path.join(UPLOAD_DIR, relPath);
+          const kind = fileCategoryType(file.originalname);
+          const meta = await probeMeta(fullPath, kind);
+          const caption = (req.body?.caption || '').trim();
+          const savedMsg = addMessage({ node: session.node, content: caption || `📎 ${file.originalname}`, type: 'media' });
+          addAttachment({
+            messageId: savedMsg.id, filename: relPath, originalName: file.originalname,
+            mimeType: file.mimetype, sizeBytes: file.size, kind,
+            pages: meta.pages ?? null, durationMs: meta.durationMs ?? null,
+            width: meta.width ?? null, height: meta.height ?? null, thumb: meta.thumb ?? null,
+          });
+          const att = { filename: relPath, original_name: file.originalname, mime_type: file.mimetype, size_bytes: file.size, kind, pages: meta.pages ?? null, duration_ms: meta.durationMs ?? null, width: meta.width ?? null, height: meta.height ?? null, thumb: meta.thumb ?? null, url: `/uploads/${relPath}` };
           broadcast({ type: 'message', message: { ...savedMsg, ...att } });
           sendJson(res, 200, { ok: true, message: savedMsg, attachment: att });
+          // legenda com menção (em qualquer posição) aciona o orquestrador com o anexo no contexto
+          if (caption && extractMentions(caption).length > 0) {
+            handleFabioInput(caption, session.node);
+          }
         } catch (e) {
           sendJson(res, 500, { error: e.message });
         }

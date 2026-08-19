@@ -107,22 +107,73 @@ function renderTelemetry(sys, totalMessages){
 }
 
 /* ---------- mensagens ---------- */
+function fmtDuration(ms){
+  if (!Number.isFinite(ms) || ms <= 0) return '';
+  const s = Math.round(ms / 1000);
+  const m = Math.floor(s / 60);
+  const r = String(s % 60).padStart(2, '0');
+  return m > 0 ? `${m}:${r}` : `0:${r}`;
+}
+const KIND_LABEL = { image:'Imagem', video:'Vídeo', audio:'Áudio', pdf:'PDF', archive:'Compactado', spreadsheet:'Planilha', code:'Código', doc:'Documento', db:'Banco de dados', other:'Arquivo' };
+
 function renderAttachment(div, m){
   if (!m.att_filename) return;
   const rel = m.att_url || '/uploads/' + m.att_filename;
-  if (m.att_mime && m.att_mime.startsWith('image/')){
+  const kind = m.att_kind || 'other';
+  const name = m.att_original_name || m.att_filename;
+  const size = m.att_size ? fmtSize(m.att_size) : '';
+  const parts = [];
+  if (kind === 'image') parts.push((m.att_mime || '').startsWith('image/') ? (m.att_mime || '').split('/')[1].toUpperCase() : 'IMAGEM');
+  else if (kind === 'pdf') parts.push('PDF');
+  else if (kind === 'audio') parts.push((m.att_mime || '').split('/')[1]?.toUpperCase() || 'ÁUDIO');
+  else if (kind === 'video') parts.push((m.att_mime || '').split('/')[1]?.toUpperCase() || 'VÍDEO');
+  else parts.push((m.att_filename || '').split('.').pop()?.toUpperCase() || KIND_LABEL[kind].toUpperCase());
+  if (size) parts.push(size);
+  if (kind === 'pdf' && m.att_pages) parts.push(`${m.att_pages} página${m.att_pages > 1 ? 's' : ''}`);
+  if ((kind === 'audio' || kind === 'video') && m.att_duration_ms) parts.push(fmtDuration(m.att_duration_ms));
+  if (kind === 'image' && m.att_width && m.att_height) parts.push(`${m.att_width}×${m.att_height}`);
+
+  const card = document.createElement('a');
+  card.className = `att-card kind-${kind}`;
+  card.href = rel;
+  card.download = name;
+  card.setAttribute('aria-label', `${KIND_LABEL[kind] || 'Arquivo'}: ${name}`);
+
+  const preview = document.createElement('div');
+  preview.className = 'att-preview';
+  const ext = (m.att_filename || '').split('.').pop()?.toUpperCase() || KIND_LABEL[kind].toUpperCase();
+  const thumbUrl = (kind === 'pdf' && m.att_thumb) ? m.att_thumb : null;
+  if (kind === 'image' || thumbUrl) {
+    // mídia real: foto/thumb com barra de extensão translúcida (nítida sobre qualquer fundo)
     const img = document.createElement('img');
-    img.className = 'media-inline';
-    img.src = rel;
-    div.appendChild(img);
+    img.src = thumbUrl || rel;
+    img.loading = 'lazy';
+    img.alt = '';
+    if (thumbUrl) img.className = 'att-thumb-pdf';
+    img.addEventListener('click', ev => { ev.preventDefault(); ev.stopPropagation(); openLightbox(img.src); });
+    img.addEventListener('error', () => { preview.innerHTML = FM_ICONS.image; });
+    preview.appendChild(img);
+    const badge = document.createElement('span');
+    badge.className = 'att-ext-media';
+    badge.textContent = '.' + ext;
+    preview.appendChild(badge);
   } else {
-    const a = document.createElement('a');
-    a.className = 'file-card';
-    a.href = rel;
-    a.download = m.att_original_name || m.att_filename;
-    a.innerHTML = `📄 ${escapeHTML(m.att_original_name || m.att_filename)}<span class="fname">${m.att_size ? (m.att_size/1024).toFixed(0)+' KB' : ''}</span>`;
-    div.appendChild(a);
+    // logo centralizada + extensão grande ao lado
+    preview.innerHTML = FM_ICONS[kind] || FM_ICONS.doc;
+    const badge = document.createElement('span');
+    badge.className = 'att-ext-big';
+    badge.textContent = '.' + ext;
+    preview.appendChild(badge);
   }
+
+  const body = document.createElement('div');
+  body.className = 'att-body';
+  body.innerHTML = `
+    <div class="att-name" title="${escapeHTML(name)}">${escapeHTML(name)}</div>
+    <div class="att-meta">${escapeHTML(parts.join(' · '))}</div>`;
+
+  card.append(preview, body);
+  div.appendChild(card);
 }
 
 function appendMessageDOM(msg){
@@ -137,6 +188,10 @@ function appendMessageDOM(msg){
   if (msg.id != null) wrap.dataset.messageId = String(msg.id);
   if (msg.content != null) wrap.dataset.messageContent = String(msg.content);
   if (msg.node != null) wrap.dataset.messageNode = String(msg.node);
+  if (msg.att_filename) {
+    wrap.dataset.attFilename = String(msg.att_filename);
+    wrap.dataset.attUrl = msg.att_url || '/uploads/' + msg.att_filename;
+  }
   const iconKey = tag === 'you' ? 'person' : tag;
   const avatarHTML = isSystem ? '' : `<div class="avatar accent-${tag === 'you' ? 'human' : tag}">${iconFor(msg.node)}</div>`;
   const model = (msg.node !== 'system' && msg.node !== 'fabio') ? `<span class="model accent-${tag === 'you' ? 'human' : tag}">${escapeHTML(modelFor(msg.node))}</span>` : '';
@@ -147,12 +202,15 @@ function appendMessageDOM(msg){
         <span class="q-text">${escapeHTML((msg.reply_preview || '').slice(0, 140))}</span>
       </div>`
     : '';
+  // mensagem-anexo sem legenda: o cartão fala por si (não repete "📎 nome" como texto)
+  const isPlainAtt = msg.att_filename && String(msg.content || '').startsWith('📎 ');
+  const bodyText = isPlainAtt ? '' : formatText(msg.content || '');
   wrap.innerHTML = `
     ${avatarHTML}
     <div class="col">
       <div class="msg-meta"><span>${(msg.created_at || '').slice(11,16) || nowTime()}</span><span class="who accent-${tag === 'you' ? 'human' : tag}">${escapeHTML(nameFor(msg.node))}</span>${model}<button class="msg-menu-btn" aria-label="Opções da mensagem" title="Opções">⋮</button></div>
       ${quote}
-      <div class="msg-bubble">${formatText(msg.content || '')}</div>
+      <div class="msg-bubble">${bodyText}</div>
     </div>`;
   const bubble = wrap.querySelector('.msg-bubble');
   renderAttachment(bubble, msg);
@@ -415,10 +473,14 @@ function openCtxMenu(msg, x, y){
   ctxMsg = msg;
   const menu = $('#ctxMenu');
   menu.hidden = false;
+  const hasAtt = !!msg.attFilename;
+  $('#ctxCopyName').hidden = !hasAtt;
+  $('#ctxCopyPath').hidden = !hasAtt;
+  $('#ctxCopyMsg').textContent = hasAtt ? 'Copiar mensagem' : 'Copiar';
   const pad = 8;
   menu.style.left = Math.max(pad, Math.min(x, window.innerWidth - menu.offsetWidth - pad)) + 'px';
   menu.style.top = Math.max(pad, Math.min(y, window.innerHeight - menu.offsetHeight - pad)) + 'px';
-  menu.querySelector('button')?.focus();
+  menu.querySelector('button:not([hidden])')?.focus();
 }
 function closeCtxMenu(){
   $('#ctxMenu').hidden = true;
@@ -432,6 +494,8 @@ function readMsgFromDom(wrap){
     id: parseInt(wrap.dataset.messageId, 10) || null,
     node: wrap.dataset.messageNode || null,
     content: wrap.dataset.messageContent !== undefined ? wrap.dataset.messageContent : '',
+    attFilename: wrap.dataset.attFilename || null,
+    attUrl: wrap.dataset.attUrl || null,
   };
 }
 
@@ -460,6 +524,18 @@ function showToast(text, isError = false){
 }
 
 $('#transcript').addEventListener('click', e => {
+  // clique simples no corpo da mensagem → marca (seleciona) e abre o menu
+  const wrap = e.target.closest('.msg');
+  if (wrap && !e.target.closest('.msg-menu-btn') && !e.target.closest('.msg-quote') && !e.target.closest('a')) {
+    e.stopPropagation();
+    wrap.classList.toggle('selected');
+    const msg = readMsgFromDom(wrap);
+    if (msg) {
+      const r = wrap.getBoundingClientRect();
+      openCtxMenu(msg, e.clientX, r.top + r.height / 2);
+    }
+    return;
+  }
   const btn = e.target.closest('.msg-menu-btn');
   if (btn) {
     e.stopPropagation();
@@ -491,13 +567,18 @@ $('#transcript').addEventListener('contextmenu', e => {
 });
 
 let lpTimer = null;
+let lpStart = null;
+let suppressClick = false;
 $('#transcript').addEventListener('touchstart', e => {
   const wrap = e.target.closest('.msg');
   if (!wrap) return;
+  lpStart = { x: e.touches[0].clientX, y: e.touches[0].clientY };
   // bloqueia seleção nativa DESDE o início do toque (não só após 500ms)
   document.body.classList.add('no-select');
   lpTimer = setTimeout(() => {
     clearTimeout(lpTimer);
+    suppressClick = true;
+    setTimeout(() => { suppressClick = false; }, 1200);
     navigator.vibrate && navigator.vibrate(40);
     const msg = readMsgFromDom(wrap);
     if (msg) {
@@ -506,12 +587,44 @@ $('#transcript').addEventListener('touchstart', e => {
     }
   }, 500);
 }, { passive: true });
-['touchmove','touchend','touchcancel'].forEach(ev =>
+$('#transcript').addEventListener('touchmove', e => {
+  // micro-movimento (<10px) NÃO cancela o long-press; scroll real (>10px) cancela
+  if (lpStart) {
+    const dx = Math.abs(e.touches[0].clientX - lpStart.x);
+    const dy = Math.abs(e.touches[0].clientY - lpStart.y);
+    if (Math.hypot(dx, dy) > 10) { clearTimeout(lpTimer); lpStart = null; }
+  }
+}, { passive: true });
+['touchend','touchcancel'].forEach(ev =>
   $('#transcript').addEventListener(ev, () => {
     clearTimeout(lpTimer);
+    lpStart = null;
     document.body.classList.remove('no-select');
   }, { passive: true })
 );
+
+function copyToClipboard(text){
+  return new Promise(resolve => {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(() => resolve(true)).catch(() => resolve(fallbackCopy(text)));
+    } else {
+      resolve(fallbackCopy(text));
+    }
+  });
+}
+function fallbackCopy(text){
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch { return false; }
+}
 
 $('#ctxMenu').addEventListener('click', e => {
   const act = e.target.closest('button')?.dataset.action;
@@ -521,22 +634,21 @@ $('#ctxMenu').addEventListener('click', e => {
     const input = $('#messageInput');
     input.value += (input.value && !input.value.endsWith(' ') ? ' ' : '') + '@' + ctxMsg.node + ' ';
     input.focus();
-  } else if (act === 'copy') {
-    const raw = ctxMsg.content;
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(raw)
-        .then(() => showToast('Copiado ✓'))
-        .catch(() => showToast('Falha ao copiar', true));
-    } else {
-      showToast('Clipboard não disponível neste navegador', true);
-    }
+  } else if (act === 'copy' || act === 'copy-name' || act === 'copy-path') {
+    const text = act === 'copy-name' ? ctxMsg.attFilename
+      : act === 'copy-path' ? ctxMsg.attUrl
+      : ctxMsg.content;
+    copyToClipboard(text).then(ok => showToast(ok ? 'Copiado ✓' : 'Falha ao copiar', !ok));
   } else if (act === 'select') {
     const el = document.querySelector(`.msg[data-message-id="${ctxMsg.id}"]`);
     if (el) el.classList.toggle('selected');
   }
   closeCtxMenu();
 });
-document.addEventListener('click', e => { if (!e.target.closest('#ctxMenu')) closeCtxMenu(); });
+document.addEventListener('click', e => {
+  if (suppressClick) { suppressClick = false; return; } // click sintético pós-long-press
+  if (!e.target.closest('#ctxMenu')) closeCtxMenu();
+});
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeCtxMenu(); });
 $('#replyCancel').addEventListener('click', cancelReply);
 
@@ -550,18 +662,19 @@ $('#searchInput').addEventListener('input', e => {
 
 /* ---------- pasta compartilhada ---------- */
 const fmModal = $('#fileModal');
-const CAT_LABEL = { image:'Imagem', video:'Vídeo', audio:'Áudio', pdf:'PDF', archive:'Compactado', spreadsheet:'Planilha', code:'Código', doc:'Documento', other:'Arquivo' };
+const CAT_LABEL = { image:'Imagem', video:'Vídeo', audio:'Áudio', pdf:'PDF', archive:'Compactado', spreadsheet:'Planilha', code:'Código', doc:'Documento', db:'Banco de dados', other:'Arquivo' };
 
 const FM_ICONS = {
-  image: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="9.5" r="1.6"/><path d="M3 17l5-5 4 4 3-3 6 6"/></svg>',
-  video: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5.5" width="14" height="13" rx="2"/><path d="M16.5 10l5-3v10l-5-3"/></svg>',
-  audio: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V6l10-2v11.5"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="15.5" r="2.5"/></svg>',
-  pdf: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/><path d="M8.5 13.5h3M8.5 16.5h4"/></svg>',
-  archive: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M7 8V6a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v2M3 13h18"/></svg>',
-  spreadsheet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 9h16M4 14h16M4 19h16M9 3v18M15 3v18"/></svg>',
-  code: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 7L3.5 12l5 5M15.5 7l5 5-5 5M13 4.5l-2.5 15"/></svg>',
-  doc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 16.5h4"/></svg>',
-  other: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5"/></svg>',
+  image: '<svg viewBox="0 0 24 24"><defs><linearGradient id="gImg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4FC3F7"/><stop offset="1" stop-color="#1B7F4B"/></linearGradient></defs><rect x="2.5" y="3.5" width="19" height="17" rx="3" fill="url(#gImg)" opacity=".96"/><circle cx="8.6" cy="9" r="1.9" fill="#fff"/><path d="M3.5 18.5l4.6-4.6 3.4 3.4 3-3 5.5 5.5" stroke="#fff" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  video: '<svg viewBox="0 0 24 24"><defs><linearGradient id="gVid" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#B388FF"/><stop offset="1" stop-color="#6A3FB5"/></linearGradient></defs><rect x="2.5" y="4.5" width="15" height="15" rx="3" fill="url(#gVid)"/><path d="M17.5 10.2l4-2.4v8.4l-4-2.4" fill="#fff" opacity=".95"/><rect x="5" y="9.5" width="8" height="5" rx="1.2" fill="#fff" opacity=".35"/><circle cx="9" cy="12" r="1.1" fill="#fff"/></svg>',
+  audio: '<svg viewBox="0 0 24 24"><defs><linearGradient id="gAud" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FFD166"/><stop offset="1" stop-color="#E89A0C"/></linearGradient></defs><circle cx="12" cy="12" r="10.2" fill="url(#gAud)"/><path d="M9.6 16.6V8.6l6-1.1v7.4" stroke="#fff" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="8.1" cy="17" r="1.7" fill="#fff"/><circle cx="14.3" cy="15.2" r="1.7" fill="#fff"/><path d="M5.2 9.6c-.7 1.4-.7 3.4 0 4.8M18.8 9.6c.7 1.4.7 3.4 0 4.8" stroke="#fff" stroke-width="1.2" stroke-linecap="round" opacity=".65"/></svg>',
+  pdf: '<svg viewBox="0 0 24 24"><defs><linearGradient id="gPdf" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FF7A7A"/><stop offset="1" stop-color="#C62A24"/></linearGradient></defs><path d="M5.5 2.8h8.2l4.8 4.8v12.6a1.6 1.6 0 0 1-1.6 1.6H5.5a1.6 1.6 0 0 1-1.6-1.6V4.4a1.6 1.6 0 0 1 1.6-1.6z" fill="url(#gPdf)"/><path d="M13.7 2.8v4.8h4.8" stroke="#fff" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/><rect x="7.4" y="11.2" width="8" height="1.35" rx=".67" fill="#fff" opacity=".92"/><rect x="7.4" y="14.4" width="6.2" height="1.35" rx=".67" fill="#fff" opacity=".7"/><rect x="7.4" y="17.4" width="4.4" height="1.35" rx=".67" fill="#fff" opacity=".5"/><circle cx="16.4" cy="16" r="3.2" fill="#fff"/><text x="13.1" y="17.9" font-size="3.6" font-family="Arial, sans-serif" font-weight="800" fill="#C62A24">PDF</text></svg>',
+  archive: '<svg viewBox="0 0 24 24"><defs><linearGradient id="gZip" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#7AA2FF"/><stop offset="1" stop-color="#2247C4"/></linearGradient></defs><rect x="3" y="7.5" width="18" height="13" rx="2.5" fill="url(#gZip)"/><path d="M6.5 7.5V5.8a2 2 0 0 1 2-2h7a2 2 0 0 1 2 2v1.7" stroke="#fff" stroke-width="1.5" fill="none" stroke-linecap="round"/><path d="M3 13h18" stroke="#fff" stroke-width="1.3" opacity=".55"/><path d="M10 13v-3h4v3M10 15.4v3h4v-3" stroke="#fff" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity=".9"/></svg>',
+  spreadsheet: '<svg viewBox="0 0 24 24"><defs><linearGradient id="gSht" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4BD37B"/><stop offset="1" stop-color="#1E7B4F"/></linearGradient></defs><rect x="3.5" y="3" width="17" height="18" rx="2.5" fill="url(#gSht)"/><rect x="3.5" y="3" width="17" height="5.2" rx="2.5" fill="#fff" opacity=".25"/><path d="M3.5 8.2h17" stroke="#fff" stroke-width="1.2" opacity=".5"/><path d="M8.8 8.2v12.8M13.5 8.2v12.8M18 8.2v12.8M3.5 13h17M3.5 17.5h17" stroke="#fff" stroke-width="1.1" opacity=".75"/></svg>',
+  code: '<svg viewBox="0 0 24 24"><defs><linearGradient id="gCode" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#4DD8E6"/><stop offset="1" stop-color="#16707D"/></linearGradient></defs><rect x="2.5" y="4" width="19" height="16" rx="3" fill="url(#gCode)"/><path d="M9 8.5L5.5 12 9 15.5M15 8.5L18.5 12 15 15.5M13.2 7l-2.4 10" stroke="#fff" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  doc: '<svg viewBox="0 0 24 24"><defs><linearGradient id="gDoc" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#93A4B5"/><stop offset="1" stop-color="#4B5C6D"/></linearGradient></defs><path d="M5.5 2.8h8.2l4.8 4.8v12.6a1.6 1.6 0 0 1-1.6 1.6H5.5a1.6 1.6 0 0 1-1.6-1.6V4.4a1.6 1.6 0 0 1 1.6-1.6z" fill="url(#gDoc)"/><path d="M13.7 2.8v4.8h4.8" stroke="#fff" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/><rect x="7.4" y="11.6" width="8.6" height="1.35" rx=".67" fill="#fff" opacity=".92"/><rect x="7.4" y="14.8" width="6.6" height="1.35" rx=".67" fill="#fff" opacity=".7"/><rect x="7.4" y="17.8" width="4.8" height="1.35" rx=".67" fill="#fff" opacity=".5"/></svg>',
+  other: '<svg viewBox="0 0 24 24"><defs><linearGradient id="gOth" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#AAB4C0"/><stop offset="1" stop-color="#5C6670"/></linearGradient></defs><path d="M5.5 2.8h8.2l4.8 4.8v12.6a1.6 1.6 0 0 1-1.6 1.6H5.5a1.6 1.6 0 0 1-1.6-1.6V4.4a1.6 1.6 0 0 1 1.6-1.6z" fill="url(#gOth)"/><path d="M13.7 2.8v4.8h4.8" stroke="#fff" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/><circle cx="9.3" cy="13" r="1.1" fill="#fff" opacity=".8"/><circle cx="12.4" cy="13" r="1.1" fill="#fff" opacity=".55"/><circle cx="15.5" cy="13" r="1.1" fill="#fff" opacity=".35"/></svg>',
+  db: '<svg viewBox="0 0 24 24"><defs><linearGradient id="gDb" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#B79CFF"/><stop offset="1" stop-color="#7C4DDB"/></linearGradient></defs><ellipse cx="12" cy="5.6" rx="8.2" ry="3.3" fill="url(#gDb)"/><path d="M3.8 5.6v12.8c0 1.8 3.7 3.3 8.2 3.3s8.2-1.5 8.2-3.3V5.6" fill="url(#gDb)"/><path d="M3.8 12c0 1.8 3.7 3.3 8.2 3.3s8.2-1.5 8.2-3.3" fill="none" stroke="#fff" stroke-width="1.2" opacity=".8"/><ellipse cx="12" cy="5.6" rx="8.2" ry="3.3" fill="none" stroke="#fff" stroke-width="1" opacity=".45"/></svg>',
 };
 
 let fmFiles = [];
@@ -859,12 +972,13 @@ async function refresh(){
 }
 
 /* ---------- lightbox ---------- */
-document.addEventListener('click', e => {
-  if (e.target.classList?.contains('media-inline')){
-    $('#lightbox-img').src = e.target.src;
-    $('#lightbox').hidden = false;
-  }
-});
+function openLightbox(src){
+  const lb = $('#lightbox');
+  const img = $('#lightbox-img');
+  img.src = src;
+  img.onload = () => { lb.hidden = false; };
+  img.onerror = () => { lb.hidden = true; };
+}
 $('#lb-close').addEventListener('click', () => $('#lightbox').hidden = true);
 
 setInterval(refresh, 15000);
